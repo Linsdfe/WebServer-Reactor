@@ -17,6 +17,10 @@ namespace reactor {
  * @brief Server构造函数
  * @param port 监听端口
  * @param thread_num IO线程数（最终传给EventLoopThreadPool）
+ * @param mysql_host MySQL主机地址
+ * @param mysql_user MySQL用户名
+ * @param mysql_password MySQL密码
+ * @param mysql_database MySQL数据库名
  * 
  * 初始化流程：
  * 1. 创建主Reactor（base_loop_）
@@ -24,12 +28,21 @@ namespace reactor {
  * 3. 创建Acceptor（负责监听端口、接受新连接）
  * 4. 定位静态资源目录（优先可执行文件目录，兜底当前目录）
  * 5. 设置新连接回调函数
+ * 6. 初始化MySQL连接参数
  */
-Server::Server(int port, int thread_num)
+Server::Server(int port, int thread_num, 
+               const std::string& mysql_host, 
+               const std::string& mysql_user, 
+               const std::string& mysql_password, 
+               const std::string& mysql_database)
     : base_loop_(new EventLoop()),
       thread_pool_(new EventLoopThreadPool(base_loop_.get(), thread_num)),
       acceptor_(new Acceptor(base_loop_.get(), port)),
-      port_(port) {
+      port_(port),
+      mysql_host_(mysql_host),
+      mysql_user_(mysql_user),
+      mysql_password_(mysql_password),
+      mysql_database_(mysql_database) {
     
     // ========== 定位静态资源目录（www） ==========
     char path[256];
@@ -98,7 +111,9 @@ void Server::NewConnection(int sockfd, const struct sockaddr_in& addr) {
     EventLoop* io_loop = thread_pool_->GetNextLoop();
 
     // 创建TCP连接对象：托管到智能指针，保证生命周期
-    std::shared_ptr<TcpConnection> conn = std::make_shared<TcpConnection>(io_loop, sockfd, src_dir_);
+    std::shared_ptr<TcpConnection> conn = std::make_shared<TcpConnection>(io_loop, sockfd, src_dir_, 
+                                                                         mysql_host_, mysql_user_, 
+                                                                         mysql_password_, mysql_database_);
     // 保存连接到映射表，管理所有活跃连接
     connections_[sockfd] = conn;
 

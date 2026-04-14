@@ -24,14 +24,22 @@ namespace reactor {
  * @param loop 所属的从Reactor
  * @param fd 连接fd
  * @param src_dir 静态资源目录
+ * @param mysql_host MySQL主机地址
+ * @param mysql_user MySQL用户名
+ * @param mysql_password MySQL密码
+ * @param mysql_database MySQL数据库名
  * 
  * 初始化流程：
  * 1. 保存基本参数（loop/fd/src_dir）
  * 2. 创建Channel管理连接fd
  * 3. 注册所有事件回调（读/写/关闭/错误）
+ * 4. 初始化Auth模块
  */
-TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir)
-    : loop_(loop), channel_(new Channel(loop, fd)), fd_(fd), src_dir_(src_dir) {
+TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
+                             const std::string& mysql_host, const std::string& mysql_user, 
+                             const std::string& mysql_password, const std::string& mysql_database)
+    : loop_(loop), channel_(new Channel(loop, fd)), fd_(fd), src_dir_(src_dir),
+      auth_(mysql_host, mysql_user, mysql_password, mysql_database) {
     // 注册事件回调：关联到当前对象的处理函数
     channel_->SetReadCallback(std::bind(&TcpConnection::HandleRead, this));
     channel_->SetWriteCallback(std::bind(&TcpConnection::HandleWrite, this));
@@ -121,32 +129,120 @@ void TcpConnection::HandleRead() {
         if (parse_ok) {
             // 解析成功→获取请求信息
             std::string path = request_.path();
+            std::string method = request_.method();
             bool keep_alive = request_.IsKeepAlive();
             // 提取剩余数据（粘包的下一个请求）
             all_data = request_.GetRemainingData();
             request_.ClearRemainingData();
 
-            // ========== 读取静态文件 ==========
-            std::string full_path = src_dir_ + path;
-            std::string file_content;
-            int code = 200; // 默认状态码200（OK）
-
-            std::ifstream file(full_path);
-            if (file.is_open()) {
-                // 读取文件内容到缓冲区
-                std::stringstream buffer;
-                buffer << file.rdbuf();
-                file_content = buffer.str();
-                file.close();
+            // ========== 处理登录和注册请求 ==========
+            //std::cout << "[INFO] 收到请求：方法=" << method << ", 路径=" << path << std::endl;
+            if (method == "POST" && path == "/login") {
+                //std::cout << "[INFO] 处理登录请求" << std::endl;
+                // 解析请求体，获取用户名和密码
+                std::string body = request_.body();
+                //std::cout << "[INFO] 请求体：" << body << std::endl;
+                std::string username, password;
+                
+                // 解析表单数据：username=xxx&password=xxx
+                size_t pos = body.find("&");
+                if (pos != std::string::npos) {
+                    std::string user_part = body.substr(0, pos);
+                    std::string pass_part = body.substr(pos + 1);
+                    
+                    size_t user_eq = user_part.find("=");
+                    size_t pass_eq = pass_part.find("=");
+                    
+                    if (user_eq != std::string::npos && pass_eq != std::string::npos) {
+                        username = user_part.substr(user_eq + 1);
+                        password = pass_part.substr(pass_eq + 1);
+                    }
+                }
+                
+                //std::cout << "[INFO] 登录请求：用户名=" << username << ", 密码=" << (password.empty() ? "空" : "***") << std::endl;
+                // 验证用户
+                bool success = auth_.ValidateUser(username, password);
+                
+                // 构建JSON响应
+                std::string response_json;
+                if (success) {
+                    std::string session_id = auth_.GenerateSessionId(username);
+                    response_json = "{\"success\": true, \"message\": \"登录成功\", \"session_id\": \"" + session_id + "\"}";
+                    //std::cout << "[INFO] 用户登录成功：" << username << std::endl;
+                } else {
+                    response_json = "{\"success\": false, \"message\": \"用户名或密码错误\"}";
+                    //std::cout << "[INFO] 用户登录失败：" << username << std::endl;
+                }
+                
+                // 构建HTTP响应
+                response_.Init(src_dir_, path, keep_alive, 200);
+                response_.MakeResponse(send_buffer_, response_json);
+                request_.Init(); // 重置请求解析器（复用）
+                //std::cout << "[INFO] 登录响应已发送" << std::endl;
+            } else if (method == "POST" && path == "/register") {
+                //std::cout << "[INFO] 处理注册请求" << std::endl;
+                // 解析请求体，获取用户名和密码
+                std::string body = request_.body();
+                //std::cout << "[INFO] 请求体：" << body << std::endl;
+                std::string username, password;
+                
+                // 解析表单数据：username=xxx&password=xxx
+                size_t pos = body.find("&");
+                if (pos != std::string::npos) {
+                    std::string user_part = body.substr(0, pos);
+                    std::string pass_part = body.substr(pos + 1);
+                    
+                    size_t user_eq = user_part.find("=");
+                    size_t pass_eq = pass_part.find("=");
+                    
+                    if (user_eq != std::string::npos && pass_eq != std::string::npos) {
+                        username = user_part.substr(user_eq + 1);
+                        password = pass_part.substr(pass_eq + 1);
+                    }
+                }
+                
+                //std::cout << "[INFO] 注册请求：用户名=" << username << ", 密码=" << (password.empty() ? "空" : "***") << std::endl;
+                // 添加用户
+                bool success = auth_.AddUser(username, password);
+                
+                // 构建JSON响应
+                std::string response_json;
+                if (success) {
+                    response_json = "{\"success\": true, \"message\": \"注册成功\"}";
+                    //std::cout << "[INFO] 用户注册成功：" << username << std::endl;
+                } else {
+                    response_json = "{\"success\": false, \"message\": \"注册失败，用户名可能已存在\"}";
+                    //std::cout << "[INFO] 用户注册失败：" << username << std::endl;
+                }
+                
+                // 构建HTTP响应
+                response_.Init(src_dir_, path, keep_alive, 200);
+                response_.MakeResponse(send_buffer_, response_json);
+                request_.Init(); // 重置请求解析器（复用）
+                //std::cout << "[INFO] 注册响应已发送" << std::endl;
             } else {
-                // 文件不存在→404 Not Found
-                code = 404;
-            }
+                // ========== 读取静态文件 ==========
+                std::string full_path = src_dir_ + path;
+                std::string file_content;
+                int code = 200; // 默认状态码200（OK）
 
-            // ========== 构建HTTP响应 ==========
-            response_.Init(src_dir_, path, keep_alive, code);
-            response_.MakeResponse(send_buffer_, file_content);
-            request_.Init(); // 重置请求解析器（复用）
+                std::ifstream file(full_path);
+                if (file.is_open()) {
+                    // 读取文件内容到缓冲区
+                    std::stringstream buffer;
+                    buffer << file.rdbuf();
+                    file_content = buffer.str();
+                    file.close();
+                } else {
+                    // 文件不存在→404 Not Found
+                    code = 404;
+                }
+
+                // ========== 构建HTTP响应 ==========
+                response_.Init(src_dir_, path, keep_alive, code);
+                response_.MakeResponse(send_buffer_, file_content);
+                request_.Init(); // 重置请求解析器（复用）
+            }
 
             // ========== 触发写事件 ==========
             if (!send_buffer_.empty()) {

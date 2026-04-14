@@ -38,6 +38,8 @@ file(GLOB_RECURSE SOURCE_FILES
     "src/http/*.cpp"
     "src/server/*.cpp"
     "src/main.cpp"
+    "src/auth/*.cpp"
+    
 )
 
 # ========== 可执行文件 ==========
@@ -47,6 +49,10 @@ add_executable(server ${SOURCE_FILES})
 # ========== 链接库 ==========
 # 链接pthread线程库（C++11 thread依赖）
 target_link_libraries(server PRIVATE pthread)
+# 链接MySQL库
+target_link_libraries(server PRIVATE mysqlclient)
+# 链接OpenSSL库
+target_link_libraries(server PRIVATE ssl crypto)
 
 # ========== 输出目录 ==========
 # 设置可执行文件输出目录：build/bin

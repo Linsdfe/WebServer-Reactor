@@ -88,6 +88,12 @@ public:
      */
     bool IsKeepAlive() const;
 
+    /**
+     * @brief 获取请求体
+     * @return std::string 请求体内容
+     */
+    std::string body() const;
+
 private:
     /**
      * @brief 解析请求行

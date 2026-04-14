@@ -37,6 +37,10 @@ public:
      * @brief Server 构造函数
      * @param port 监听端口
      * @param thread_num IO 线程数（默认 8）
+     * @param mysql_host MySQL主机地址
+     * @param mysql_user MySQL用户名
+     * @param mysql_password MySQL密码
+     * @param mysql_database MySQL数据库名
      *
      * 初始化流程：
      * 1. 创建主 Reactor（base_loop_）
@@ -45,7 +49,11 @@ public:
      * 4. 定位静态资源目录（www）
      * 5. 设置 Acceptor 的新连接回调（NewConnection）
      */
-    Server(int port, int thread_num = 8);
+    Server(int port, int thread_num = 8, 
+           const std::string& mysql_host = "localhost", 
+           const std::string& mysql_user = "root", 
+           const std::string& mysql_password = "", 
+           const std::string& mysql_database = "webserver");
 
     /**
      * @brief Server 析构函数（空实现，智能指针自动释放）
@@ -105,6 +113,10 @@ private:
     std::unordered_map<int, std::shared_ptr<TcpConnection>> connections_; // 活跃连接映射表（fd → TcpConnection）
     std::string src_dir_;                                         // 静态资源目录（www）
     int port_;                                                     // 监听端口
+    std::string mysql_host_;                                       // MySQL主机地址
+    std::string mysql_user_;                                       // MySQL用户名
+    std::string mysql_password_;                                   // MySQL密码
+    std::string mysql_database_;                                   // MySQL数据库名
 };
 
 } // namespace reactor

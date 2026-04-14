@@ -57,6 +57,7 @@ void HttpRequest::Init() {
 bool HttpRequest::Parse(const std::string& buff) {
     if (buff.empty() && remaining_data_.empty()) {
         return false;
+        
     }
 
     // ========== 粘包处理：拼接上次剩余数据和新数据 ==========
@@ -70,16 +71,17 @@ bool HttpRequest::Parse(const std::string& buff) {
     while (state_ != FINISH) {
         // 按 \r\n 分割行（HTTP 协议要求行尾必须是 \r\n）
         pos = buffer.find("\r\n");
-        if (pos == std::string::npos) {
+        if (pos == std::string::npos && state_ != BODY) {
             // 数据不完整：保存剩余数据，下次解析
             remaining_data_ = buffer;
             return false;
         }
 
-        // 提取单行，移除已解析部分
-        line = buffer.substr(0, pos);
-        buffer = buffer.substr(pos + 2);
-
+        if(state_ != BODY){
+            // 提取单行，移除已解析部分
+            line = buffer.substr(0, pos);
+            buffer = buffer.substr(pos + 2);
+        }
         // 状态机切换
         switch (state_) {
             case REQUEST_LINE:
@@ -93,18 +95,35 @@ bool HttpRequest::Parse(const std::string& buff) {
 
             case HEADERS:
                 if (line.empty()) {
-                    // 空行：请求头结束，解析完成
-                    state_ = FINISH;
-                    remaining_data_ = buffer; // 保存粘包的下一个请求
+                    // 空行：请求头结束
+                    if (method_ == "POST") {
+                        // POST 请求需要解析请求体
+                        state_ = BODY;
+                    } else {
+                        // GET 请求直接完成
+                        state_ = FINISH;
+                        remaining_data_ = buffer; // 保存粘包的下一个请求
+                    }
                 } else {
                     ParseHeader(line); // 解析单个请求头
                 }
                 break;
 
             case BODY:
-                // 本项目暂不处理 POST 请求的 Body，直接完成
+                // 解析 POST 请求体
+                if (header_.count("content-length")) {
+                    size_t content_length = static_cast<size_t>(std::stoi(header_.at("content-length")));
+                    // 检查是否有足够的数据
+                    if (buffer.size() >= content_length) {
+                        body_ = buffer.substr(0, content_length);
+                        remaining_data_ = buffer.substr(content_length);
+                    } else {
+                        // 数据不完整：保存剩余数据，下次解析
+                        remaining_data_ = buffer;
+                        return false;
+                    }
+                }
                 state_ = FINISH;
-                remaining_data_ = buffer;
                 break;
 
             default:
@@ -196,6 +215,14 @@ bool HttpRequest::IsKeepAlive() const {
         return true;
     }
     return false;
+}
+
+/**
+ * @brief 获取请求体
+ * @return std::string 请求体内容
+ */
+std::string HttpRequest::body() const {
+    return body_;
 }
 
 } // namespace reactor

@@ -15,6 +15,7 @@
 #include "net/channel.h"
 #include "http/httprequest.h"
 #include "http/httpresponse.h"
+#include "auth/auth.h"
 #include <memory>
 #include <string>
 
@@ -32,8 +33,14 @@ public:
      * @param loop 所属的EventLoop（从Reactor）
      * @param fd 连接fd
      * @param src_dir 静态资源目录
+     * @param mysql_host MySQL主机地址
+     * @param mysql_user MySQL用户名
+     * @param mysql_password MySQL密码
+     * @param mysql_database MySQL数据库名
      */
-    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir);
+    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
+                  const std::string& mysql_host, const std::string& mysql_user, 
+                  const std::string& mysql_password, const std::string& mysql_database);
     
     /**
      * @brief 析构函数：关闭连接fd
@@ -93,6 +100,7 @@ private:
     HttpResponse response_;                // HTTP响应构建器
     std::string send_buffer_;              // 发送缓冲区（待发送的响应数据）
     CloseCallback close_callback_;         // 连接关闭回调（通知Server）
+    Auth auth_;                            // 认证模块
 };
 
 } // namespace reactor
