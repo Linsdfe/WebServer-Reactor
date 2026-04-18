@@ -169,14 +169,14 @@ void HttpResponse::AddContent(std::string& response, const std::string& cachedCo
     // ========== 优先使用缓存内容 ==========
     if (!cachedContent.empty()) {
         response += "Content-Length: " + std::to_string(cachedContent.size()) + "\r\n";
-        response += "\r\n"; // 【关键】头部和 Body 之间必须有空行
+        response += "\r\n"; // 头部和 Body 之间必须有空行
         response += cachedContent;
         return;
     }
 
     // ========== 兜底：从磁盘读取文件 ==========
     std::string fullPath = srcDir_ + path_;
-    std::ifstream file(fullPath);
+    std::ifstream file(fullPath, std::ios::binary);
 
     if (!file.is_open()) {
         // 文件不存在：返回 404，Content-Length=0
@@ -185,14 +185,15 @@ void HttpResponse::AddContent(std::string& response, const std::string& cachedCo
         return;
     }
 
-    // 读取文件内容到字符串
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string fileContent = buffer.str();
+    file.seekg(0, std::ios::end);
+    size_t fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    std::string fileContent(fileSize, '\0');
+    file.read(&fileContent[0], fileSize);
     file.close();
 
-    // 拼接 Content-Length、空行和响应体
-    response += "Content-Length: " + std::to_string(fileContent.size()) + "\r\n";
+    response += "Content-Length: " + std::to_string(fileSize) + "\r\n";
     response += "\r\n";
     response += fileContent;
 }

@@ -24,7 +24,7 @@ namespace reactor {
  * 1. 创建 epoll fd（epoll_create(1)，参数 1 已废弃但需保留）
  * 2. 初始化事件数组（m_events）
  */
-Epoller::Epoller(int maxEvents) 
+Epoller::Epoller(int maxEvents)
     : m_epollFd(epoll_create(1)), m_events(maxEvents) {
     if (m_epollFd < 0) {
         std::cerr << "[Error] Epoll create failed!" << std::endl;

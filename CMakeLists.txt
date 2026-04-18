@@ -21,9 +21,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # 警告选项：Wall（基础警告）+ Wextra（额外警告）+ Wpedantic（严格语法）
     add_compile_options(-Wall -Wextra -Wpedantic)
-    # Release模式：O2优化（提升运行效率）
-    set(CMAKE_CXX_FLAGS_RELEASE "-O2")
-    # Debug模式：-g（调试信息）+ O0（关闭优化）+ DEBUG宏
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -march=native -flto -fno-exceptions -funroll-loops")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
 endif()
 

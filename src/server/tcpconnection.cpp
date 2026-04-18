@@ -90,15 +90,15 @@ void TcpConnection::ConnectDestroyed() {
  */
 void TcpConnection::HandleRead() {
     loop_->AssertInLoopThread();
-    char buff[8192]; // 8KB缓冲区（平衡内存和系统调用）
+    char buff[65536];
     std::string all_data;
-    int read_len = 0;
+    all_data.reserve(16384);
+    ssize_t read_len = 0;
 
     // ET模式下必须循环读：直到EAGAIN/EWOULDBLOCK
     while (true) {
-        memset(buff, 0, sizeof(buff));
         // 非阻塞读：recv返回-1且errno=EAGAIN时表示无数据
-        read_len = recv(fd_, buff, sizeof(buff)-1, 0);
+        read_len = recv(fd_, buff, sizeof(buff), 0);
         if (read_len > 0) {
             all_data.append(buff, read_len); // 拼接数据
         } else if (read_len == 0) {
@@ -226,21 +226,34 @@ void TcpConnection::HandleRead() {
                 std::string file_content;
                 int code = 200; // 默认状态码200（OK）
 
-                std::ifstream file(full_path);
-                if (file.is_open()) {
-                    // 读取文件内容到缓冲区
-                    std::stringstream buffer;
-                    buffer << file.rdbuf();
-                    file_content = buffer.str();
-                    file.close();
+             // 1. 用 C 风格 stat 获取文件大小（可替换为 C++17 std::filesystem::file_size）
+                struct stat file_stat;
+                if (stat(full_path.c_str(), &file_stat) != 0 || !S_ISREG(file_stat.st_mode)) {
+                    code = 404; // 文件不存在或不是普通文件
                 } else {
-                    // 文件不存在→404 Not Found
-                    code = 404;
+                    // 2. 二进制模式打开文件（避免文本模式转换）
+                    std::ifstream file(full_path, std::ios::binary);
+                    if (file.is_open()) {
+                        // 3. 预分配内存，避免动态扩容
+                        file_content.resize(file_stat.st_size);
+                        // 4. 直接读取到 string 缓冲区（零中间拷贝）
+                        file.read(&file_content[0], file_stat.st_size);
+                        
+                        // 检查读取是否成功（如文件中途被截断）
+                        if (!file) {
+                            code = 500; // 内部服务器错误
+                            file_content.clear();
+                        }
+                        file.close();
+                    } else {
+                        code = 404;
+                    }
                 }
+
 
                 // ========== 构建HTTP响应 ==========
                 response_.Init(src_dir_, path, keep_alive, code);
-                response_.MakeResponse(send_buffer_, file_content);
+                response_.MakeResponse(send_buffer_, std::move(file_content));
                 request_.Init(); // 重置请求解析器（复用）
             }
 

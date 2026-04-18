@@ -142,16 +142,19 @@ bool HttpRequest::Parse(const std::string& buff) {
  * 示例：GET /index.html HTTP/1.1
  */
 bool HttpRequest::ParseRequestLine(const std::string& line) {
-    // 正则：匹配方法、路径、版本（非贪婪匹配）
-    std::regex patten("^([^ ]*) ([^ ]*) HTTP/([^ ]*)$");
-    std::smatch subMatch;
-    if (std::regex_match(line, subMatch, patten)) {
-        method_ = subMatch[1];   // 提取方法（GET/POST 等）
-        path_ = subMatch[2];     // 提取路径（/index.html 等）
-        version_ = subMatch[3];  // 提取版本（1.0/1.1 等）
-        return true;
-    }
-    return false;
+    size_t first_space = line.find(' ');
+    if (first_space == std::string::npos) return false;
+    
+    size_t second_space = line.find(' ', first_space + 1);
+    if (second_space == std::string::npos) return false;
+    
+    size_t http_pos = line.find("HTTP/", second_space + 1);
+    if (http_pos == std::string::npos || http_pos != second_space + 1) return false;
+    
+    method_ = line.substr(0, first_space);
+    path_ = line.substr(first_space + 1, second_space - first_space - 1);
+    version_ = line.substr(http_pos + 5);
+    return true;
 }
 
 /**
@@ -173,15 +176,18 @@ void HttpRequest::ParsePath() {
  * 【关键】Key 转小写：解决 HTTP 请求头大小写不敏感问题
  */
 void HttpRequest::ParseHeader(const std::string& line) {
-    // 正则：匹配 Key 和 Value（Value 前可选空格）
-    std::regex patten("^([^:]*): ?(.*)$");
-    std::smatch subMatch;
-    if (std::regex_match(line, subMatch, patten)) {
-        // Key 转小写，Value 也转小写（简化判断）
-        std::string key = ToLower(subMatch[1]);
-        std::string value = ToLower(subMatch[2]);
-        header_[key] = value;
-    }
+    size_t colon_pos = line.find(':');
+    if (colon_pos == std::string::npos) return;
+    
+    size_t key_end = colon_pos;
+    while (key_end > 0 && line[key_end - 1] == ' ') key_end--;
+    
+    size_t value_start = colon_pos + 1;
+    while (value_start < line.size() && line[value_start] == ' ') value_start++;
+    
+    std::string key = ToLower(line.substr(0, key_end));
+    std::string value = line.substr(value_start);
+    header_[key] = value;
 }
 
 // ========== Getter 函数：获取解析结果 ==========
