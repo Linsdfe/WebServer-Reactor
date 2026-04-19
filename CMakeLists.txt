@@ -11,8 +11,8 @@ cmake_minimum_required(VERSION 3.10)
 project(WebServer-Reactor VERSION 1.0 LANGUAGES CXX)
 
 # ========== C++标准配置 ==========
-# 强制C++11标准，关闭编译器扩展（保证跨平台兼容性）
-set(CMAKE_CXX_STANDARD 11)
+# 强制C++17标准，关闭编译器扩展（保证跨平台兼容性）
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
