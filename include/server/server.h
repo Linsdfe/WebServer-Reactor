@@ -14,6 +14,7 @@
 #include "net/eventloopthreadpool.h"
 #include "net/acceptor.h"
 #include "server/tcpconnection.h"
+#include "server/cachemanager.h"
 #include <unordered_map>
 #include <memory>
 #include <string>
@@ -117,6 +118,7 @@ private:
     std::string mysql_user_;                                       // MySQL用户名
     std::string mysql_password_;                                   // MySQL密码
     std::string mysql_database_;                                   // MySQL数据库名
+    std::shared_ptr<CacheManager> cache_manager_;                  // 静态资源缓存管理器
 };
 
 } // namespace reactor

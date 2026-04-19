@@ -37,9 +37,11 @@ namespace reactor {
  */
 TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
                              const std::string& mysql_host, const std::string& mysql_user, 
-                             const std::string& mysql_password, const std::string& mysql_database)
+                             const std::string& mysql_password, const std::string& mysql_database,
+                             const std::shared_ptr<CacheManager>& cache_manager)
     : loop_(loop), channel_(new Channel(loop, fd)), fd_(fd), src_dir_(src_dir),
-      auth_(mysql_host, mysql_user, mysql_password, mysql_database) {
+      auth_(mysql_host, mysql_user, mysql_password, mysql_database),
+      cache_manager_(cache_manager) {
     // 注册事件回调：关联到当前对象的处理函数
     channel_->SetReadCallback(std::bind(&TcpConnection::HandleRead, this));
     channel_->SetWriteCallback(std::bind(&TcpConnection::HandleWrite, this));
@@ -221,32 +223,42 @@ void TcpConnection::HandleRead() {
                 request_.Init(); // 重置请求解析器（复用）
                 //std::cout << "[INFO] 注册响应已发送" << std::endl;
             } else {
-                // ========== 读取静态文件 ==========
+                // ========== 读取静态文件（使用缓存） ==========
                 std::string full_path = src_dir_ + path;
                 std::string file_content;
                 int code = 200; // 默认状态码200（OK）
 
-             // 1. 用 C 风格 stat 获取文件大小（可替换为 C++17 std::filesystem::file_size）
-                struct stat file_stat;
-                if (stat(full_path.c_str(), &file_stat) != 0 || !S_ISREG(file_stat.st_mode)) {
-                    code = 404; // 文件不存在或不是普通文件
+                // 1. 尝试从缓存获取
+                if (cache_manager_ && cache_manager_->GetCache(full_path, file_content)) {
+                    // 缓存命中
                 } else {
-                    // 2. 二进制模式打开文件（避免文本模式转换）
-                    std::ifstream file(full_path, std::ios::binary);
-                    if (file.is_open()) {
-                        // 3. 预分配内存，避免动态扩容
-                        file_content.resize(file_stat.st_size);
-                        // 4. 直接读取到 string 缓冲区（零中间拷贝）
-                        file.read(&file_content[0], file_stat.st_size);
-                        
-                        // 检查读取是否成功（如文件中途被截断）
-                        if (!file) {
-                            code = 500; // 内部服务器错误
-                            file_content.clear();
-                        }
-                        file.close();
+                    // 2. 缓存未命中，从磁盘读取
+                    struct stat file_stat;
+                    if (stat(full_path.c_str(), &file_stat) != 0 || !S_ISREG(file_stat.st_mode)) {
+                        code = 404; // 文件不存在或不是普通文件
                     } else {
-                        code = 404;
+                        // 二进制模式打开文件（避免文本模式转换）
+                        std::ifstream file(full_path, std::ios::binary);
+                        if (file.is_open()) {
+                            // 预分配内存，避免动态扩容
+                            file_content.resize(file_stat.st_size);
+                            // 直接读取到 string 缓冲区（零中间拷贝）
+                            file.read(&file_content[0], file_stat.st_size);
+                            
+                            // 检查读取是否成功（如文件中途被截断）
+                            if (!file) {
+                                code = 500; // 内部服务器错误
+                                file_content.clear();
+                            } else {
+                                // 3. 将文件内容添加到缓存
+                                if (cache_manager_) {
+                                    cache_manager_->SetCache(full_path, file_content);
+                                }
+                            }
+                            file.close();
+                        } else {
+                            code = 404;
+                        }
                     }
                 }
 

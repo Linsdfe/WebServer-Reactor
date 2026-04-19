@@ -16,13 +16,19 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ========== 【修复点1】设置默认构建类型为Debug（未指定时生效） ==========
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+endif()
+
 # ========== 编译选项 ==========
 # GCC/Clang编译器：开启全量警告+O2优化（Release）/调试信息（Debug）
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # 警告选项：Wall（基础警告）+ Wextra（额外警告）+ Wpedantic（严格语法）
     add_compile_options(-Wall -Wextra -Wpedantic)
     set(CMAKE_CXX_FLAGS_RELEASE "-O2 -march=native -flto -fno-exceptions -funroll-loops")
-    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
+    # ========== 【修复点2】加固调试配置：强制无优化+调试信息 ==========
+    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG -fno-omit-frame-pointer")
 endif()
 
 # ========== 头文件路径 ==========

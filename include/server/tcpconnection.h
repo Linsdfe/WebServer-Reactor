@@ -16,6 +16,7 @@
 #include "http/httprequest.h"
 #include "http/httpresponse.h"
 #include "auth/auth.h"
+#include "server/cachemanager.h"
 #include <memory>
 #include <string>
 
@@ -30,17 +31,19 @@ public:
 
     /**
      * @brief 构造函数
-     * @param loop 所属的EventLoop（从Reactor）
-     * @param fd 连接fd
+     * @param loop 所属的EventLoop
+     * @param fd 连接的socket fd
      * @param src_dir 静态资源目录
      * @param mysql_host MySQL主机地址
      * @param mysql_user MySQL用户名
      * @param mysql_password MySQL密码
      * @param mysql_database MySQL数据库名
+     * @param cache_manager 静态资源缓存管理器
      */
     TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
-                  const std::string& mysql_host, const std::string& mysql_user, 
-                  const std::string& mysql_password, const std::string& mysql_database);
+                 const std::string& mysql_host, const std::string& mysql_user, 
+                 const std::string& mysql_password, const std::string& mysql_database,
+                 const std::shared_ptr<CacheManager>& cache_manager);
     
     /**
      * @brief 析构函数：关闭连接fd
@@ -101,6 +104,7 @@ private:
     std::string send_buffer_;              // 发送缓冲区（待发送的响应数据）
     CloseCallback close_callback_;         // 连接关闭回调（通知Server）
     Auth auth_;                            // 认证模块
+    std::shared_ptr<CacheManager> cache_manager_; // 静态资源缓存管理器
 };
 
 } // namespace reactor
