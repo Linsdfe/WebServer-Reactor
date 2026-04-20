@@ -122,11 +122,11 @@ chmod +x run_benchmark.sh
 #### 核心压测结果（优化后）
 | 文件名称 | 大小 | QPS (Requests/sec) | 带宽 (Transfer/sec) |
 |----------|------|-------------------|---------------------|
-| welcome.html | 小文件 | 106684.01 | 107.34MB |
-| index.html | 小文件 | 90421.31 | 0.93GB |
-| 1mb.bin | 1MB | 11345.40 | 11.08GB |
-| 10mb.bin | 10MB | 1031.59 | 10.09GB |
-| 100mb.bin | 100MB | 104.45 | 10.28GB |
+| welcome.html | 小文件 | 145484.89 | 146.38MB |
+| index.html | 小文件 | 102820.91 | 1.06GB |
+| 1mb.bin | 1MB | 12486.02 | 12.20GB |
+| 10mb.bin | 10MB | 1135.26 | 11.10GB |
+| 100mb.bin | 100MB | 93.94 | 9.24GB |
 
 #### 完整压测日志（优化后）
 ```
@@ -135,6 +135,43 @@ chmod +x run_benchmark.sh
   模式：HTTP/1.1 长连接 (Keep-Alive)
 ==========================================
 
+[准备] 正在生成 .bin 测试文件...
+        重新生成 100mb.bin (100MB)...
+        重新生成 1mb.bin (1MB)...
+        重新生成 10mb.bin (10MB)...
+[准备] .bin 文件就绪 (HTML 文件保持原样)。
+
+[编译] 正在重新编译服务器...
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/linshaojie/桌面/WebServer-Reactor/build
+[  7%] Building CXX object CMakeFiles/server.dir/src/http/httprequest.cpp.o
+[ 14%] Building CXX object CMakeFiles/server.dir/src/http/httpresponse.cpp.o
+[ 21%] Building CXX object CMakeFiles/server.dir/src/auth/auth.cpp.o
+[ 28%] Building CXX object CMakeFiles/server.dir/src/net/channel.cpp.o
+[ 42%] Building CXX object CMakeFiles/server.dir/src/net/eventloop.cpp.o
+[ 42%] Building CXX object CMakeFiles/server.dir/src/net/acceptor.cpp.o
+[ 50%] Building CXX object CMakeFiles/server.dir/src/net/eventloopthread.cpp.o
+[ 64%] Building CXX object CMakeFiles/server.dir/src/server/server.cpp.o
+[ 64%] Building CXX object CMakeFiles/server.dir/src/server/cachemanager.cpp.o
+[ 71%] Building CXX object CMakeFiles/server.dir/src/main.cpp.o
+[ 78%] Building CXX object CMakeFiles/server.dir/src/net/epoller.cpp.o
+[ 85%] Building CXX object CMakeFiles/server.dir/src/net/eventloopthreadpool.cpp.o
+[ 92%] Building CXX object CMakeFiles/server.dir/src/server/tcpconnection.cpp.o
+[100%] Linking CXX executable bin/server
+Copy static resource directory www to bin/
+[100%] Built target server
+[编译] 服务器编译成功！
+
+[启动] 正在启动服务器...
+[启动] 服务器启动成功，正在监听端口 8888...
+
 ==========================================
   压测目标: welcome.html
   参数: -t12 -c400 -d30s
@@ -142,11 +179,11 @@ chmod +x run_benchmark.sh
 Running 30s test @ http://127.0.0.1:8888/welcome.html
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     4.12ms    3.72ms 110.28ms   80.42%
-    Req/Sec     8.94k     1.55k   16.97k    66.47%
-  3210381 requests in 30.09s, 3.15GB read
-Requests/sec: 106684.01
-Transfer/sec:    107.34MB
+    Latency     4.00ms   17.57ms 333.24ms   99.05%
+    Req/Sec    12.31k     3.04k   29.98k    73.66%
+  4379053 requests in 30.10s, 4.30GB read
+Requests/sec: 145484.89
+Transfer/sec:    146.38MB
 
 ==========================================
   压测目标: index.html
@@ -155,11 +192,11 @@ Transfer/sec:    107.34MB
 Running 30s test @ http://127.0.0.1:8888/index.html
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     4.60ms    3.82ms  75.20ms   69.92%
-    Req/Sec     7.58k     0.86k   12.46k    72.16%
-  2720463 requests in 30.09s, 27.99GB read
-Requests/sec:  90421.31
-Transfer/sec:      0.93GB
+    Latency     3.48ms    3.50ms 131.73ms   89.43%
+    Req/Sec     8.63k     2.04k   20.82k    73.29%
+  3092956 requests in 30.08s, 31.83GB read
+Requests/sec: 102820.91
+Transfer/sec:      1.06GB
 
 ==========================================
   压测目标: 1mb.bin
@@ -168,11 +205,11 @@ Transfer/sec:      0.93GB
 Running 30s test @ http://127.0.0.1:8888/1mb.bin
   12 threads and 200 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    10.30ms    5.53ms  88.34ms   76.16%
-    Req/Sec     0.95k   217.43     1.79k    69.00%
-  341405 requests in 30.09s, 333.45GB read
-Requests/sec:  11345.40
-Transfer/sec:     11.08GB
+    Latency     9.47ms    8.67ms 286.29ms   94.52%
+    Req/Sec     1.05k   248.13     1.82k    68.46%
+  375831 requests in 30.10s, 367.07GB read
+Requests/sec:  12486.02
+Transfer/sec:     12.20GB
 
 ==========================================
   压测目标: 10mb.bin
@@ -181,11 +218,11 @@ Transfer/sec:     11.08GB
 Running 30s test @ http://127.0.0.1:8888/10mb.bin
   12 threads and 150 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   155.72ms  154.74ms   1.04s    83.63%
-    Req/Sec    86.48     24.84   182.00     69.02%
-  31049 requests in 30.10s, 303.77GB read
-Requests/sec:   1031.59
-Transfer/sec:     10.09GB
+    Latency   145.83ms  146.94ms   1.18s    82.75%
+    Req/Sec    95.28     25.54   180.00     68.79%
+  34172 requests in 30.10s, 334.23GB read
+Requests/sec:   1135.26
+Transfer/sec:     11.10GB
 
 ==========================================
   压测目标: 100mb.bin
@@ -194,11 +231,11 @@ Transfer/sec:     10.09GB
 Running 1m test @ http://127.0.0.1:8888/100mb.bin
   12 threads and 100 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   918.97ms  541.26ms   3.76s    71.20%
-    Req/Sec     9.96      5.97    50.00     74.13%
-  6277 requests in 1.00m, 617.85GB read
-Requests/sec:    104.45
-Transfer/sec:     10.28GB
+    Latency     1.02s   591.70ms   5.40s    72.17%
+    Req/Sec     9.40      5.97    39.00     71.79%
+  5648 requests in 1.00m, 555.79GB read
+Requests/sec:     93.94
+Transfer/sec:      9.24GB
 ```
 
 ## 程序运行流程图
@@ -304,4 +341,3 @@ cd bin
 - 🔒 支持 HTTPS（集成 OpenSSL）
 - 🗂️ 优化静态资源缓存机制（如内存映射文件）
 - 📈 添加实时性能监控面板
-
