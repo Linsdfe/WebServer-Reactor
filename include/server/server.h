@@ -118,7 +118,7 @@ private:
     std::string mysql_user_;                                       // MySQL用户名
     std::string mysql_password_;                                   // MySQL密码
     std::string mysql_database_;                                   // MySQL数据库名
-    std::shared_ptr<CacheManager> cache_manager_;                  // 静态资源缓存管理器
+    std::unique_ptr<CacheManager> cache_manager_;                  // 静态资源内存缓存管理器
 };
 
 } // namespace reactor

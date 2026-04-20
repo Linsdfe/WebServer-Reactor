@@ -6,8 +6,9 @@
  * 1. 生成标准 HTTP/1.1 响应报文
  * 2. 支持 MIME 类型映射（文件后缀 → Content-Type）
  * 3. 支持状态码映射（200/404/500 等）
- * 4. 性能优化：预分配内存、优先使用缓存内容
+ * 4. 性能优化：预分配内存
  * 5. 长连接支持：Connection 和 Keep-Alive 头
+ * 6. 支持零拷贝响应（仅响应头在用户态，响应体通过sendfile发送）
  */
 
 #include "http/httpresponse.h"
@@ -58,7 +59,8 @@ const std::unordered_map<int, std::string> HttpResponse::CODE_STATUS = {
 HttpResponse::HttpResponse() {
     code_ = -1;
     isKeepAlive_ = false;
-    path_ = srcDir_ = "";
+    is_static_file_ = false;
+    path_ = srcDir_ = file_path_ = "";
     memset(&mmFileStat_, 0, sizeof(mmFileStat_));
 }
 
@@ -79,34 +81,69 @@ void HttpResponse::Init(const std::string& srcDir, std::string& path, bool isKee
     path_ = path;
     isKeepAlive_ = isKeepAlive;
     code_ = code;
+    
+    std::string temp=srcDir;
+    if (!temp.empty() && temp.back() == '/') {
+        temp.pop_back();
+    }
+    file_path_ = temp + path_;
+    is_static_file_ = false;
     memset(&mmFileStat_, 0, sizeof(mmFileStat_));
+
+    if (stat(file_path_.c_str(), &mmFileStat_) == 0 && S_ISREG(mmFileStat_.st_mode)) {
+        is_static_file_ = true;
+    }
 }
 
 /**
- * @brief 构建完整的 HTTP 响应报文（核心逻辑）
+ * @brief 构建完整的 HTTP 响应报文（用于回退路径）
  * @param response 输出参数：拼接后的响应报文
- * @param cachedContent 可选：缓存的文件内容（优先使用，避免重复读盘）
- *
- * 【性能优化】
- * 1. 预分配内存：response.reserve(1024 + cachedContent.size())，减少字符串扩容开销
- * 2. 优先缓存内容：避免重复从磁盘读取文件
+ * @param content 响应体内容
  *
  * HTTP 报文顺序（协议要求）：
  * 状态行 → 响应头 → 空行 → 响应体
  */
-void HttpResponse::MakeResponse(std::string& response, const std::string& cachedContent) {
-    // 默认状态码 200（OK）
+void HttpResponse::MakeResponse(std::string& response, const std::string& content) {
     if (code_ == -1) {
         code_ = 200;
     }
 
-    // 【性能优化】预分配内存，减少字符串扩容开销
-    response.reserve(1024 + cachedContent.size());
+    response.reserve(1024 + content.size());
+    AddStateLine(response);
+    AddHeader(response, content.size());
+    response += "\r\n";
+    response += content;
+}
 
-    // 按 HTTP 协议顺序拼接报文
-    AddStateLine(response);   // 1. 状态行
-    AddHeader(response);      // 2. 响应头
-    AddContent(response, cachedContent); // 3. 空行 + 响应体
+/**
+ * @brief 构建HTTP响应头（用于零拷贝发送）
+ * @param response 输出参数：拼接后的响应头报文
+ * @param file_size 响应体大小（用于设置Content-Length）
+ */
+void HttpResponse::MakeResponseHeader(std::string& response, size_t file_size) {
+    if (code_ == -1) {
+        code_ = 200;
+    }
+
+    response.reserve(512);
+    AddStateLine(response);
+
+    size_t content_length = 0;
+    if (code_ == 200 && file_size > 0) {
+        content_length = file_size;
+    }
+    AddHeader(response, content_length);
+
+    response += "\r\n";
+}
+
+void HttpResponse::MakeErrorResponse(std::string& response, int error_code, const std::string& error_msg) {
+    code_ = error_code;
+    response.reserve(128);
+    AddStateLine(response);
+    AddHeader(response, error_msg.size());
+    response += "\r\n";
+    response += error_msg;
 }
 
 /**
@@ -133,13 +170,15 @@ void HttpResponse::AddStateLine(std::string& response) {
 /**
  * @brief 添加 HTTP 响应头
  * @param response 响应报文拼接缓冲区
+ * @param content_length 响应体大小（0表示未知）
  *
  * 添加的响应头：
  * 1. Connection：keep-alive / close
  * 2. Keep-Alive：timeout=60, max=1000（长连接时）
  * 3. Content-Type：根据文件后缀映射 MIME 类型
+ * 4. Content-Length：响应体大小
  */
-void HttpResponse::AddHeader(std::string& response) {
+void HttpResponse::AddHeader(std::string& response, size_t content_length) {
     response += "Connection: ";
     if (isKeepAlive_) {
         // 长连接：设置超时时间和最大请求数
@@ -151,51 +190,10 @@ void HttpResponse::AddHeader(std::string& response) {
     }
     // Content-Type：根据文件后缀映射
     response += "Content-Type: " + GetFileType() + "\r\n";
-}
-
-/**
- * @brief 添加 HTTP 响应体（含空行分隔）
- * @param response 响应报文拼接缓冲区
- * @param cachedContent 缓存的文件内容（优先使用）
- *
- * 【关键】HTTP 协议要求：响应头和响应体之间必须有一个空行（\r\n\r\n）
- *
- * 逻辑：
- * 1. 优先使用缓存内容（cachedContent）
- * 2. 兜底：从磁盘读取文件
- * 3. 文件不存在：返回 404，Content-Length=0
- */
-void HttpResponse::AddContent(std::string& response, const std::string& cachedContent) {
-    // ========== 优先使用缓存内容 ==========
-    if (!cachedContent.empty()) {
-        response += "Content-Length: " + std::to_string(cachedContent.size()) + "\r\n";
-        response += "\r\n"; // 头部和 Body 之间必须有空行
-        response += cachedContent;
-        return;
+    // Content-Length：响应体大小
+    if (content_length > 0) {
+        response += "Content-Length: " + std::to_string(content_length) + "\r\n";
     }
-
-    // ========== 兜底：从磁盘读取文件 ==========
-    std::string fullPath = srcDir_ + path_;
-    std::ifstream file(fullPath, std::ios::binary);
-
-    if (!file.is_open()) {
-        // 文件不存在：返回 404，Content-Length=0
-        code_ = 404;
-        response += "Content-Length: 0\r\n\r\n";
-        return;
-    }
-
-    file.seekg(0, std::ios::end);
-    size_t fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    std::string fileContent(fileSize, '\0');
-    file.read(&fileContent[0], fileSize);
-    file.close();
-
-    response += "Content-Length: " + std::to_string(fileSize) + "\r\n";
-    response += "\r\n";
-    response += fileContent;
 }
 
 /**

@@ -14,8 +14,11 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <sys/socket.h> // 【修复】添加recv/send定义头文件
+#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/sendfile.h>
+#include <fcntl.h>
+#include <cstring>
 
 namespace reactor {
 
@@ -35,14 +38,14 @@ namespace reactor {
  * 3. 注册所有事件回调（读/写/关闭/错误）
  * 4. 初始化Auth模块
  */
-TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
-                             const std::string& mysql_host, const std::string& mysql_user, 
-                             const std::string& mysql_password, const std::string& mysql_database,
-                             const std::shared_ptr<CacheManager>& cache_manager)
+TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir,
+                             CacheManager* cache_manager,
+                             const std::string& mysql_host, const std::string& mysql_user,
+                             const std::string& mysql_password, const std::string& mysql_database)
     : loop_(loop), channel_(new Channel(loop, fd)), fd_(fd), src_dir_(src_dir),
       auth_(mysql_host, mysql_user, mysql_password, mysql_database),
-      cache_manager_(cache_manager) {
-    // 注册事件回调：关联到当前对象的处理函数
+      cache_manager_(cache_manager),
+      file_fd_(-1), file_offset_(0), file_remain_(0) {
     channel_->SetReadCallback(std::bind(&TcpConnection::HandleRead, this));
     channel_->SetWriteCallback(std::bind(&TcpConnection::HandleWrite, this));
     channel_->SetCloseCallback(std::bind(&TcpConnection::HandleClose, this));
@@ -223,50 +226,61 @@ void TcpConnection::HandleRead() {
                 request_.Init(); // 重置请求解析器（复用）
                 //std::cout << "[INFO] 注册响应已发送" << std::endl;
             } else {
-                // ========== 读取静态文件（使用缓存） ==========
-                std::string full_path = src_dir_ + path;
-                std::string file_content;
-                int code = 200; // 默认状态码200（OK）
+                // ========== 处理静态文件GET请求 ==========
+                // 优先使用零拷贝路径（sendfile），失败时回退到普通读取
+                response_.Init(src_dir_, path, keep_alive, 200);
 
-                // 1. 尝试从缓存获取
-                if (cache_manager_ && cache_manager_->GetCache(full_path, file_content)) {
-                    // 缓存命中
-                } else {
-                    // 2. 缓存未命中，从磁盘读取
-                    struct stat file_stat;
-                    if (stat(full_path.c_str(), &file_stat) != 0 || !S_ISREG(file_stat.st_mode)) {
-                        code = 404; // 文件不存在或不是普通文件
+                if (response_.IsZeroCopy() && response_.GetFileSize() > 24 * 1024) {
+                    // 零拷贝路径（sendfile）：文件大于24KB时使用，避免内核→用户态→内核的拷贝开销
+                    const std::string& file_path = response_.GetFilePath();
+                    file_fd_ = open(file_path.c_str(), O_RDONLY);
+                    if (file_fd_ >= 0) {
+                        file_offset_ = 0;
+                        file_remain_ = response_.GetFileSize();
+                        response_.MakeResponseHeader(send_buffer_, file_remain_);
                     } else {
-                        // 二进制模式打开文件（避免文本模式转换）
+                        response_.MakeErrorResponse(send_buffer_, 404, "Not Found");
+                    }
+                } else {
+                    // 用户内存缓存路径：文件小于等于24KB时使用，减少系统调用开销
+                    std::string full_path = src_dir_ + path;
+                    std::string file_content;
+                    int code = 200;
+
+                    // 尝试从缓存获取
+                    if (cache_manager_ && cache_manager_->GetCache(full_path, file_content)) {
+                        // 缓存命中
+                    } else {
+                        // 缓存未命中，读取文件
                         std::ifstream file(full_path, std::ios::binary);
-                        if (file.is_open()) {
-                            // 预分配内存，避免动态扩容
-                            file_content.resize(file_stat.st_size);
-                            // 直接读取到 string 缓冲区（零中间拷贝）
-                            file.read(&file_content[0], file_stat.st_size);
-                            
-                            // 检查读取是否成功（如文件中途被截断）
-                            if (!file) {
-                                code = 500; // 内部服务器错误
-                                file_content.clear();
+                        if (!file.is_open()) {
+                            code = 404;
+                        } else {
+                            file.seekg(0, std::ios::end);
+                            std::streamsize size = file.tellg();
+                            if (size <= 0) {
+                                code = 404;
                             } else {
-                                // 3. 将文件内容添加到缓存
-                                if (cache_manager_) {
+                                file.seekg(0, std::ios::beg);
+                                file_content.resize(static_cast<size_t>(size));
+                                file.read(&file_content[0], size);
+                                if (!file) {
+                                    code = 500;
+                                    file_content.clear();
+                                } else if (cache_manager_ && size <= 24 * 1024) {
+                                    // 缓存小文件（≤24KB）
                                     cache_manager_->SetCache(full_path, file_content);
                                 }
                             }
                             file.close();
-                        } else {
-                            code = 404;
                         }
                     }
+
+                    response_.Init(src_dir_, path, keep_alive, code);
+                    response_.MakeResponse(send_buffer_, file_content);
                 }
 
-
-                // ========== 构建HTTP响应 ==========
-                response_.Init(src_dir_, path, keep_alive, code);
-                response_.MakeResponse(send_buffer_, std::move(file_content));
-                request_.Init(); // 重置请求解析器（复用）
+                request_.Init();
             }
 
             // ========== 触发写事件 ==========
@@ -285,52 +299,85 @@ void TcpConnection::HandleRead() {
 
 /**
  * @brief 处理写事件（发送HTTP响应）
- * 
+ *
  * 流程：
- * 1. 循环发送数据（ET模式）→ 直到发送缓冲区满/发送完成
- * 2. 发送完成→清空缓冲区，禁用写事件
- * 3. 非长连接→触发关闭逻辑
+ * 1. 先发送send_buffer_中的响应头数据
+ * 2. 如果有零拷贝文件正在发送，继续sendfile发送
+ * 3. 发送完成→清空缓冲区，禁用写事件
+ * 4. 非长连接→触发关闭逻辑
  */
 void TcpConnection::HandleWrite() {
     loop_->AssertInLoopThread();
-    if (send_buffer_.empty()) {
-        // 无数据→禁用写事件
-        channel_->DisableWriting();
+
+    // 发送用户态缓冲区数据（响应头）
+    if (!send_buffer_.empty()) {
+        int bytes_sent = 0;
+        int bytes_to_send = send_buffer_.size();
+        const char* ptr = send_buffer_.c_str();
+
+        while (bytes_sent < bytes_to_send) {
+            int len = send(fd_, ptr + bytes_sent, bytes_to_send - bytes_sent, 0);
+            if (len > 0) {
+                bytes_sent += len;
+            } else if (len < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    send_buffer_ = std::string(ptr + bytes_sent, bytes_to_send - bytes_sent);
+                    return;
+                }
+                HandleError();
+                return;
+            } else {
+                break;
+            }
+        }
+
+        send_buffer_.clear();
+    }
+
+    // 继续零拷贝发送文件
+    if (file_fd_ >= 0) {
+        if (SendFileZeroCopy()) {
+            close(file_fd_);
+            file_fd_ = -1;
+            file_offset_ = 0;
+            file_remain_ = 0;
+
+            channel_->DisableWriting();
+
+            if (!response_.IsKeepAlive()) {
+                HandleClose();
+            }
+        }
         return;
     }
 
-    int bytes_sent = 0;
-    int bytes_to_send = send_buffer_.size();
-    const char* ptr = send_buffer_.c_str();
-
-    // 循环发送：直到所有数据发送完成/发送缓冲区满
-    while (bytes_sent < bytes_to_send) {
-        int len = send(fd_, ptr + bytes_sent, bytes_to_send - bytes_sent, 0);
-        if (len > 0) {
-            bytes_sent += len; // 累计发送字节数
-        } else if (len < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 发送缓冲区满→保存剩余数据，等待下次写事件
-                send_buffer_ = std::string(ptr + bytes_sent, bytes_to_send - bytes_sent);
-                return;
-            }
-            // 发送错误→触发错误处理
-            HandleError();
-            return;
-        } else {
-            // len=0→发送完成（正常情况）
-            break;
-        }
-    }
-
-    // 全部发送完成→清空缓冲区，禁用写事件
-    send_buffer_.clear();
     channel_->DisableWriting();
 
-    // 非长连接→关闭连接（短连接）
     if (!response_.IsKeepAlive()) {
         HandleClose();
     }
+}
+
+/**
+ * @brief 使用sendfile零拷贝发送静态文件
+ * @return true=发送完成，false=发送阻塞（等待下次写事件）
+ */
+bool TcpConnection::SendFileZeroCopy() {
+    while (file_remain_ > 0) {
+        ssize_t sent = sendfile(fd_, file_fd_, &file_offset_, file_remain_);
+        if (sent > 0) {
+            file_remain_ -= sent;
+        } else if (sent < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return false;
+            }
+            std::cout << "[ERROR] sendfile failed: " << strerror(errno) << std::endl;
+            return true;
+        } else {
+            return true;
+        }
+    }
+    return true;
 }
 
 /**

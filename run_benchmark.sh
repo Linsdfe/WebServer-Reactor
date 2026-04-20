@@ -1,41 +1,101 @@
 #!/bin/bash
 
 # ==========================================
-# WebServer 压测脚本 (自动清空系统缓存)
+# Reactor WebServer 真实场景压测脚本
+# 模式：HTTP/1.1 默认长连接 (Keep-Alive)
 # ==========================================
 
 echo "=========================================="
-echo "  开始压测准备..."
+echo "  Reactor WebServer 真实场景压测"
+echo "  模式：HTTP/1.1 长连接 (Keep-Alive)"
 echo "=========================================="
 
-# 1. 同步磁盘数据 (防止数据丢失)
-echo "[1/4] 正在同步磁盘数据 (sync)..."
-sync
+# 全局变量存储结果
+SUMMARY_REPORT=""
+BASE="http://127.0.0.1:8888"
 
-# 2. 清空系统缓存 (需要 root 权限)
-# 3 = 清空页缓存 + 目录项 + inodes
-echo "[2/4] 正在清空系统缓存 (drop_caches)..."
-sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+# 清空缓存函数
+clean_cache() {
+    sync
+    sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null
+    sleep 2
+}
 
-if [ $? -eq 0 ]; then
-    echo "        系统缓存已清空。"
-else
-    echo "        警告: 缓存清空失败，请检查是否有 sudo 权限。"
-fi
+# 压测执行函数 (并记录结果)
+run_benchmark() {
+    local name=$1
+    local file=$2
+    local args=$3
+    local url="${BASE}/${file}"
+    
+    echo ""
+    echo "=========================================="
+    echo "  压测目标: ${name}"
+    echo "  参数: ${args}"
+    echo "=========================================="
 
-# 3. 等待一小会儿，让系统稳定
-echo "[3/4] 系统稳定中..."
-sleep 2
+    # 执行压测并捕获输出
+    output=$(wrk ${args} ${url} 2>&1)
+    echo "$output"
 
-# 4. 执行压测
-echo "[4/4] 开始 wrk 压测..."
+    # 解析结果 (提取 QPS 和 带宽)
+    qps=$(echo "$output" | grep "Requests/sec" | awk '{print $2}')
+    transfer=$(echo "$output" | grep "Transfer/sec" | awk '{print $2, $3}')
+    
+    # 如果解析失败，设为 N/A
+    [ -z "$qps" ] && qps="N/A"
+    [ -z "$transfer" ] && transfer="N/A"
+
+    # 追加到报告
+    SUMMARY_REPORT+="| ${name} | ${qps} | ${transfer} |\n"
+}
+
+# ==========================================
+# 压测开始
+# ==========================================
+clean_cache
+
+# 初始化报告表头
+SUMMARY_REPORT+="\n"
+SUMMARY_REPORT+="==========================================\n"
+SUMMARY_REPORT+="  压测总结报告\n"
+SUMMARY_REPORT+="==========================================\n"
+SUMMARY_REPORT+="| 文件名称 | QPS (Requests/sec) | 带宽 (Transfer/sec) |\n"
+SUMMARY_REPORT+="|----------|-------------------|---------------------|\n"
+
+# --------------------------
+# 1. 极小文件 (917B)
+# --------------------------
+run_benchmark "welcome.html" "welcome.html" "-t12 -c400 -d30s"
+clean_cache
+
+# --------------------------
+# 2. 小文件 (10.9KB)
+# --------------------------
+run_benchmark "index.html" "index.html" "-t12 -c400 -d30s"
+clean_cache
+
+# --------------------------
+# 3. 中等文件 (1MB)
+# --------------------------
+run_benchmark "1mb.bin" "1mb.bin" "-t12 -c200 -d30s"
+clean_cache
+
+# --------------------------
+# 4. 【新增】较大文件 (10MB)
+# --------------------------
+run_benchmark "10mb.bin" "10mb.bin" "-t12 -c150 -d30s"
+clean_cache
+
+# --------------------------
+# 5. 大文件 (100MB)
+# --------------------------
+run_benchmark "100mb.bin" "100mb.bin" "-t12 -c100 -d60s --timeout 10s"
+
+# ==========================================
+# 打印最终报告
+# ==========================================
+echo -e "$SUMMARY_REPORT"
 echo "=========================================="
-echo ""
-
-# 这里是你的 wrk 命令
-wrk -t12 -c200 -d30s http://127.0.0.1:8888/index.html
-
-echo ""
-echo "=========================================="
-echo "  压测完成！"
+echo "  压测全部完成！"
 echo "=========================================="

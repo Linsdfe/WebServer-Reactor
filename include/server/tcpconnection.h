@@ -3,13 +3,14 @@
 /**
  * @file tcpconnection.h
  * @brief TcpConnection类：管理单个TCP连接的生命周期和IO
- * 
+ *
  * TcpConnection核心职责：
  * 1. 管理连接fd的生命周期（建立/销毁）
  * 2. 处理IO事件（读/写/关闭/错误）
  * 3. 解析HTTP请求（调用HttpRequest）
  * 4. 构建HTTP响应（调用HttpResponse）
  * 5. 处理长连接/短连接
+ * 6. 支持零拷贝sendfile发送静态文件
  */
 #include "net/eventloop.h"
 #include "net/channel.h"
@@ -34,17 +35,17 @@ public:
      * @param loop 所属的EventLoop
      * @param fd 连接的socket fd
      * @param src_dir 静态资源目录
+     * @param cache_manager 缓存管理器
      * @param mysql_host MySQL主机地址
      * @param mysql_user MySQL用户名
      * @param mysql_password MySQL密码
      * @param mysql_database MySQL数据库名
-     * @param cache_manager 静态资源缓存管理器
      */
-    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, 
-                 const std::string& mysql_host, const std::string& mysql_user, 
-                 const std::string& mysql_password, const std::string& mysql_database,
-                 const std::shared_ptr<CacheManager>& cache_manager);
-    
+    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir,
+                 CacheManager* cache_manager,
+                 const std::string& mysql_host, const std::string& mysql_user,
+                 const std::string& mysql_password, const std::string& mysql_database);
+
     /**
      * @brief 析构函数：关闭连接fd
      */
@@ -55,17 +56,17 @@ public:
      * @param cb 回调函数
      */
     void SetCloseCallback(CloseCallback cb) { close_callback_ = std::move(cb); }
-    
+
     /**
      * @brief 连接建立初始化（注册fd到Epoller，开启读事件）
      */
     void ConnectEstablished();
-    
+
     /**
      * @brief 连接销毁（注销Epoller事件，清理资源）
      */
     void ConnectDestroyed();
-    
+
     /**
      * @brief 获取所属的EventLoop（【修复】添加Getter保证线程安全）
      * @return EventLoop* 所属的从Reactor
@@ -77,21 +78,27 @@ private:
      * @brief 处理读事件（读取TCP数据，解析HTTP请求）
      */
     void HandleRead();
-    
+
     /**
      * @brief 处理写事件（发送HTTP响应数据）
      */
     void HandleWrite();
-    
+
     /**
      * @brief 处理关闭事件（触发close_callback_）
      */
     void HandleClose();
-    
+
     /**
      * @brief 处理错误事件（触发HandleClose）
      */
     void HandleError();
+
+    /**
+     * @brief 使用sendfile零拷贝发送静态文件
+     * @return true=发送完成，false=发送阻塞（等待下次写事件）
+     */
+    bool SendFileZeroCopy();
 
     // ========== 成员变量 ==========
     EventLoop* loop_;                      // 所属的从Reactor
@@ -104,7 +111,12 @@ private:
     std::string send_buffer_;              // 发送缓冲区（待发送的响应数据）
     CloseCallback close_callback_;         // 连接关闭回调（通知Server）
     Auth auth_;                            // 认证模块
-    std::shared_ptr<CacheManager> cache_manager_; // 静态资源缓存管理器
+    CacheManager* cache_manager_;          // 静态资源缓存管理器
+
+    // ========== 零拷贝发送状态 ==========
+    int file_fd_;                          // 要发送的文件fd（-1表示不是零拷贝）
+    off_t file_offset_;                    // 已发送的文件偏移
+    size_t file_remain_;                   // 剩余待发送字节数
 };
 
 } // namespace reactor

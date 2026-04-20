@@ -62,7 +62,7 @@ Server::Server(int port, int thread_num,
     std::cout << "[Info] Resource directory: " << src_dir_ << std::endl;
 
     // ========== 初始化缓存管理器 ==========
-    cache_manager_ = std::make_shared<CacheManager>();
+    cache_manager_ = std::make_unique<CacheManager>();
     std::cout << "[Info] Cache manager initialized" << std::endl;
 
     // ========== 设置新连接回调 ==========
@@ -116,9 +116,9 @@ void Server::NewConnection(int sockfd, const struct sockaddr_in& addr) {
 
     // 创建TCP连接对象：托管到智能指针，保证生命周期
     std::shared_ptr<TcpConnection> conn = std::make_shared<TcpConnection>(io_loop, sockfd, src_dir_, 
+                                                                         cache_manager_.get(),
                                                                          mysql_host_, mysql_user_, 
-                                                                         mysql_password_, mysql_database_,
-                                                                         cache_manager_);
+                                                                         mysql_password_, mysql_database_);
     // 保存连接到映射表，管理所有活跃连接
     connections_[sockfd] = conn;
 
