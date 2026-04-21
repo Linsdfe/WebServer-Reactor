@@ -38,12 +38,9 @@ namespace reactor {
  * 3. 注册所有事件回调（读/写/关闭/错误）
  * 4. 初始化Auth模块
  */
-TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir,
-                             CacheManager* cache_manager,
-                             const std::string& mysql_host, const std::string& mysql_user,
-                             const std::string& mysql_password, const std::string& mysql_database)
+TcpConnection::TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, CacheManager* cache_manager)
     : loop_(loop), channel_(new Channel(loop, fd)), fd_(fd), src_dir_(src_dir),
-      auth_(mysql_host, mysql_user, mysql_password, mysql_database),
+      auth_(),
       cache_manager_(cache_manager),
       file_fd_(-1), file_offset_(0), file_remain_(0) {
     channel_->SetReadCallback(std::bind(&TcpConnection::HandleRead, this));

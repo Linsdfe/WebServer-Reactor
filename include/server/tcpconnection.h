@@ -41,10 +41,7 @@ public:
      * @param mysql_password MySQL密码
      * @param mysql_database MySQL数据库名
      */
-    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir,
-                 CacheManager* cache_manager,
-                 const std::string& mysql_host, const std::string& mysql_user,
-                 const std::string& mysql_password, const std::string& mysql_database);
+    TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, CacheManager* cache_manager);
 
     /**
      * @brief 析构函数：关闭连接fd

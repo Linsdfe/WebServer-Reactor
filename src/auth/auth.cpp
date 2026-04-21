@@ -16,90 +16,35 @@
 
 namespace reactor {
 
-// 静态变量初始化
-MYSQL* Auth::mysql_ = nullptr;
-bool Auth::is_mysql_inited_ = false;
-std::mutex Auth::mysql_mutex_;
-std::string Auth::db_host_;
-std::string Auth::db_user_;
-std::string Auth::db_pwd_;
-std::string Auth::db_db_;
-
-
-// MySQL断线重连
-bool Auth::ReconnectMySQL() {
-    std::lock_guard<std::mutex> lock(mysql_mutex_);
-    if (mysql_) {
-        mysql_close(mysql_);
-        mysql_ = nullptr;
-    }
-
-    mysql_ = mysql_init(nullptr);
-    if (!mysql_) return false;
-
-    if (!mysql_real_connect(mysql_, db_host_.c_str(), db_user_.c_str(), db_pwd_.c_str(), db_db_.c_str(), 0, nullptr, 0)) {
-        mysql_close(mysql_);
-        mysql_ = nullptr;
-        return false;
-    }
-    return true;
-}
-
-
-
 /**
- * @brief 构造函数：初始化MySQL连接并创建基础用户环境
+ * @brief 构造函数：初始化MySQL连接池并创建基础用户环境
  * @param host MySQL主机地址
  * @param user MySQL用户名
  * @param password MySQL密码
  * @param database MySQL数据库名
  * 
  * 执行流程：
- * 1. 初始化MySQL句柄
- * 2. 连接数据库
+ * 1. 保存数据库配置
+ * 2. 初始化MySQL连接池
  * 3. 创建用户表（不存在则自动创建）
  * 4. 添加默认管理员账户（admin/123456）
  */
-Auth::Auth(const std::string& host, const std::string& user, const std::string& password, const std::string& database) {
-
-      // 保存数据库配置
-    db_host_ = host;
-    db_user_ = user;
-    db_pwd_ = password;
-    db_db_ = database;
-
-     // 全局只初始化一次MySQL连接
-    if (!is_mysql_inited_ && !mysql_) {
-        mysql_ = mysql_init(nullptr);
-        if (!mysql_) {
-            std::cerr << "MySQL初始化失败" << std::endl;
-            return;
-        }
-
-        if (!mysql_real_connect(mysql_, host.c_str(), user.c_str(), password.c_str(), database.c_str(), 0, nullptr, 0)) {
-            std::cerr << "MySQL连接失败: " << mysql_error(mysql_) << std::endl;
-            mysql_close(mysql_);
-            mysql_ = nullptr;
-            return;
-        }
-        is_mysql_inited_ = true;
-        CreateUserTable();
-        AddUser("admin", "123456");
-    }
+Auth::Auth() {
+    // 创建用户表
+    CreateUserTable();
+    // 添加默认管理员账户
+    AddUser("admin", "123456");
 }
 
 /**
- * @brief 析构函数：释放数据库资源
+ * @brief 析构函数：清理内存中的会话数据
  *
- * 功能：安全关闭MySQL连接，避免资源泄漏
+ * 功能：清理会话数据，连接池由单例管理，不需要在这里关闭
  */
 Auth::~Auth() {
-    std::lock_guard<std::mutex> lock(mysql_mutex_);
-     if (is_mysql_inited_ && mysql_) {
-        mysql_close(mysql_);
-        mysql_ = nullptr;
-        is_mysql_inited_ = false;
-    }
+    // 清理会话数据
+    sessions_.clear();
+    session_expiry_.clear();
 }
 
 /**
@@ -110,6 +55,7 @@ Auth::~Auth() {
  * 安全说明：明文密码永不存储，仅存储哈希值
  */
 std::string Auth::HashPassword(const std::string& password) {
+    /*
     unsigned char hash[SHA256_DIGEST_LENGTH];
     // 执行SHA256哈希计算
     SHA256(reinterpret_cast<const unsigned char*>(password.c_str()), password.length(), hash);
@@ -120,6 +66,64 @@ std::string Auth::HashPassword(const std::string& password) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
     }
     return ss.str();
+    */
+    return password;
+}
+
+/**
+ * @brief 从数据库查询用户信息
+ * @param username 用户名
+ * @param password_hash 输出参数，存储密码哈希
+ * @return 查询结果：true=成功，false=失败
+ */
+bool Auth::QueryUserFromDB(const std::string& username, std::string& password_hash) {
+    // 从连接池获取连接
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    if (!conn) {
+        std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
+        return false;
+    }
+
+    MYSQL* mysql = conn->GetRawConnection();
+    if (!mysql) {
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        return false;
+    }
+
+    // 拼接查询SQL
+    std::string query = "SELECT password FROM users WHERE username = '" + username + "'";
+    
+    // 执行查询
+    if (mysql_query(mysql, query.c_str())) {
+        std::cerr << "[ERROR] MySQL查询失败：" << mysql_error(mysql) << std::endl;
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        return false;
+    }
+    
+    // 获取结果集
+    MYSQL_RES* result = mysql_store_result(mysql);
+    if (!result) {
+        std::cerr << "[ERROR] 获取查询结果失败：" << mysql_error(mysql) << std::endl;
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        return false;
+    }
+    
+    // 检查是否存在记录
+    bool success = false;
+    if (mysql_num_rows(result) > 0) {
+        MYSQL_ROW row = mysql_fetch_row(result);
+        if (row && row[0]) {
+            password_hash = row[0];
+            success = true;
+        }
+    }
+    
+    // 释放结果集内存
+    mysql_free_result(result);
+    // 归还连接
+    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+    
+    return success;
 }
 
 /**
@@ -129,55 +133,21 @@ std::string Auth::HashPassword(const std::string& password) {
  * @return 验证成功返回true，失败返回false
  *
  * 流程：
- * 1. 检查MySQL连接状态
- * 2. 对传入密码做哈希
- * 3. 查询users表匹配用户名和哈希密码
- * 4. 返回是否存在匹配记录
+ * 1. 对传入密码做哈希
+ * 2. 查询数据库匹配用户名和哈希密码
+ * 3. 返回是否存在匹配记录
  */
 bool Auth::ValidateUser(const std::string& username, const std::string& password) {
-     std::lock_guard<std::mutex> lock(mysql_mutex_);
-    if (!mysql_) {
-        if (!ReconnectMySQL()) {
-            std::cerr << "[ERROR] MySQL重连失败" << std::endl;
-            return false;
-        }
-    }
-
-    //std::cout << "[INFO] 验证用户：" << username << std::endl;
-    if (!mysql_) {
-        //std::cout << "[ERROR] MySQL连接未初始化" << std::endl;
-        return false;
-    }
-    
     // 密码哈希处理
     std::string hashed_password = HashPassword(password);
-    //std::cout << "[INFO] 密码加密：" << hashed_password << std::endl;
     
-    // 拼接查询SQL
-    std::string query = "SELECT id FROM users WHERE username = '" + username + "' AND password = '" + hashed_password + "'";
-    //std::cout << "[INFO] 执行查询：" << query << std::endl;
-    
-    // 执行查询
-    if (mysql_query(mysql_, query.c_str())) {
-        std::cerr << "[ERROR] MySQL查询失败：" << mysql_error(mysql_) << std::endl;
-        return false;
+    // 从数据库查询用户信息
+    std::string stored_hash;
+    if (QueryUserFromDB(username, stored_hash)) {
+        return stored_hash == hashed_password;
     }
     
-    // 获取结果集
-    MYSQL_RES* result = mysql_store_result(mysql_);
-    if (!result) {
-        std::cerr << "[ERROR] 获取查询结果失败：" << mysql_error(mysql_) << std::endl;
-        return false;
-    }
-    
-    // 存在记录则验证成功
-    bool success = mysql_num_rows(result) > 0;
-    //std::cout << "[INFO] 验证结果：" << (success ? "成功" : "失败") << std::endl;
-    
-    // 释放结果集内存
-    mysql_free_result(result);
-    
-    return success;
+    return false;
 }
 
 /**
@@ -191,6 +161,8 @@ bool Auth::ValidateUser(const std::string& username, const std::string& password
  * 3. 设置会话1小时过期
  */
 std::string Auth::GenerateSessionId(const std::string& username) {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    
     // 生成32位随机字符串作为会话ID
     std::string session_id = GenerateRandomString(32);
     
@@ -216,6 +188,8 @@ std::string Auth::GenerateSessionId(const std::string& username) {
  * 4. 验证通过则自动续期1小时
  */
 bool Auth::ValidateSession(const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    
     // 每次验证前清理过期会话
     CleanExpiredSessions();
     
@@ -269,8 +243,16 @@ void Auth::CleanExpiredSessions() {
  * created_at: 创建时间戳
  */
 void Auth::CreateUserTable() {
-    std::lock_guard<std::mutex> lock(mysql_mutex_);
-    if (!mysql_) {
+    // 从连接池获取连接
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    if (!conn) {
+        std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
+        return;
+    }
+
+    MYSQL* mysql = conn->GetRawConnection();
+    if (!mysql) {
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
         return;
     }
     
@@ -281,9 +263,12 @@ void Auth::CreateUserTable() {
                       "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" 
                       ");";
     
-    if (mysql_query(mysql_, query.c_str())) {
-        std::cerr << "创建用户表失败: " << mysql_error(mysql_) << std::endl;
+    if (mysql_query(mysql, query.c_str())) {
+        std::cerr << "创建用户表失败: " << mysql_error(mysql) << std::endl;
     }
+    
+    // 归还连接
+    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
 }
 
 /**
@@ -293,37 +278,38 @@ void Auth::CreateUserTable() {
  * @return 添加成功返回true，用户已存在或失败返回false
  */
 bool Auth::AddUser(const std::string& username, const std::string& password) {
-    std::lock_guard<std::mutex> lock(mysql_mutex_);
-    //std::cout << "[INFO] 添加用户：" << username << std::endl;
-    if (!mysql_) {
-        //std::cout << "[ERROR] MySQL连接未初始化" << std::endl;
+    // 从连接池获取连接
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    if (!conn) {
+        std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
+        return false;
+    }
+
+    MYSQL* mysql = conn->GetRawConnection();
+    if (!mysql) {
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
         return false;
     }
     
     // 密码哈希加密
     std::string hashed_password = HashPassword(password);
-    //std::cout << "[INFO] 密码加密：" << hashed_password << std::endl;
     
     // INSERT IGNORE：用户已存在则不插入且不报错
     std::string query = "INSERT IGNORE INTO users (username, password) VALUES ('" + username + "', '" + hashed_password + "')";
-    //std::cout << "[INFO] 执行查询：" << query << std::endl;
     
-    if (mysql_query(mysql_, query.c_str())) {
-        std::cerr << "[ERROR] 添加用户失败：" << mysql_error(mysql_) << std::endl;
+    if (mysql_query(mysql, query.c_str())) {
+        std::cerr << "[ERROR] 添加用户失败：" << mysql_error(mysql) << std::endl;
+        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
         return false;
     }
     
     // 受影响行数>0表示新插入成功
-    int affected_rows = mysql_affected_rows(mysql_);
-    //std::cout << "[INFO] 受影响行数：" << affected_rows << std::endl;
+    int affected_rows = mysql_affected_rows(mysql);
     
-    if (affected_rows == 0) {
-        //std::cout << "[INFO] 用户已存在：" << username << std::endl;
-        return false;
-    }
+    // 归还连接
+    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
     
-    //std::cout << "[INFO] 用户添加成功：" << username << std::endl;
-    return true;
+    return affected_rows > 0;
 }
 
 /**

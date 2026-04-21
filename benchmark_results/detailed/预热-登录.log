@@ -1,0 +1,24 @@
+测试阶段: 预热-登录
+线程数: 4
+并发数: 50
+持续时间: 10秒 (实际: 10秒)
+总请求数: 10079
+QPS: 1000.39
+平均延迟: 101.92ms
+P50延迟: 
+P90延迟: 
+P99延迟: 272.83
+错误数: 0
+错误率: 0%
+传输速率: 226.65KB 
+
+原始输出:
+Running 10s test @ http://localhost:8888/login
+  4 threads and 50 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   101.92ms  238.82ms   1.98s    93.42%
+    Req/Sec   272.83     59.64   530.00     86.99%
+  10079 requests in 10.08s, 2.23MB read
+  Socket errors: connect 0, read 0, write 0, timeout 6
+Requests/sec:   1000.39
+Transfer/sec:    226.65KB

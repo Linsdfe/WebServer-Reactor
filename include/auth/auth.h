@@ -13,6 +13,7 @@
  * 1. MySQL C API：用于用户信息的持久化存储
  * 2. OpenSSL SHA：用于密码哈希加密
  * 3. C++11 及以上：使用 unordered_map、chrono 等标准库
+ * 4. MySQL 连接池：优化数据库连接管理
  */
 
 #include <string>
@@ -21,6 +22,7 @@
 #include <mysql/mysql.h>
 #include <openssl/sha.h>
 #include <mutex>  // 线程锁
+#include "auth/mysql_connection_pool.h"
 
 namespace reactor {
 
@@ -35,19 +37,13 @@ class Auth {
 public:
     /**
      * @brief 构造函数
-     * @param host MySQL 服务器主机地址（如 127.0.0.1）
-     * @param user MySQL 登录用户名
-     * @param password MySQL 登录密码
-     * @param database 要连接的 MySQL 数据库名
-     * 
-     * 功能：初始化 MySQL 连接，准备数据库操作环境
      */
-    Auth(const std::string& host, const std::string& user, const std::string& password, const std::string& database);
+    Auth();
     
     /**
      * @brief 析构函数
      * 
-     * 功能：释放 MySQL 连接资源，清理内存中的会话数据
+     * 功能：清理内存中的会话数据
      */
     ~Auth();
     
@@ -118,9 +114,14 @@ public:
     bool AddUser(const std::string& username, const std::string& password);
     
 private:
-
-     // 重连MySQL
-    bool ReconnectMySQL();
+    
+    /**
+     * @brief 从数据库查询用户信息
+     * @param username 用户名
+     * @param password_hash 输出参数，存储密码哈希
+     * @return bool 查询结果：true=成功，false=失败
+     */
+    bool QueryUserFromDB(const std::string& username, std::string& password_hash);
     
     /**
      * @brief 生成指定长度的安全随机字符串
@@ -141,21 +142,11 @@ private:
     std::string HashPassword(const std::string& password);
     
 private:
-    // MySQL 数据库连接句柄，负责所有数据库交互
-    static MYSQL* mysql_;
-
-    // 标记连接是否初始化
-    static bool is_mysql_inited_;
-
-     // 线程安全锁（解决多线程并发操作MySQL崩溃）
-    static std::mutex mysql_mutex_;
-
-     // 数据库配置（用于重连）
-    static std::string db_host_;
-    static std::string db_user_;
-    static std::string db_pwd_;
-    static std::string db_db_;
-
+    // 数据库配置
+    std::string db_host_;
+    std::string db_user_;
+    std::string db_pwd_;
+    std::string db_db_;
 
     // 内存会话表：key=会话ID，value=用户名
     std::unordered_map<std::string, std::string> sessions_;
@@ -165,6 +156,9 @@ private:
     
     // 会话默认过期时间：3600 秒（1 小时）
     const int SESSION_EXPIRY_SECONDS = 3600;
+    
+    // 线程安全锁
+    std::mutex session_mutex_;
 };
 
 } // namespace reactor

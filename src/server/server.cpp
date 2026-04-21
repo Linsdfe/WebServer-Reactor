@@ -8,6 +8,7 @@
  * 3. 线程安全的连接映射管理
  */
 #include "server/server.h"
+#include "auth/mysql_connection_pool.h"
 #include <unistd.h>
 #include <iostream>
 
@@ -86,6 +87,12 @@ Server::~Server() {}
  * 3. 启动主Reactor的事件循环（base_loop_->Loop()）
  */
 void Server::Start() {
+    // 初始化MySQL连接池
+    std::cout << "[Info] Initializing MySQL connection pool..." << std::endl;
+    MySQLConnectionPool::GetInstance().Initialize(
+        mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, 0
+    );
+    
     std::cout << "[Info] Server start success!" << std::endl;
     // 启动IO线程池：创建thread_num个EventLoopThread并启动
     thread_pool_->Start();
@@ -116,9 +123,7 @@ void Server::NewConnection(int sockfd, const struct sockaddr_in& addr) {
 
     // 创建TCP连接对象：托管到智能指针，保证生命周期
     std::shared_ptr<TcpConnection> conn = std::make_shared<TcpConnection>(io_loop, sockfd, src_dir_, 
-                                                                         cache_manager_.get(),
-                                                                         mysql_host_, mysql_user_, 
-                                                                         mysql_password_, mysql_database_);
+                                                                         cache_manager_.get());
     // 保存连接到映射表，管理所有活跃连接
     connections_[sockfd] = conn;
 
