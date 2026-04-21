@@ -60,11 +60,8 @@ Server::Server(int port, int thread_num,
         src_dir_ = "./www/";
     }
 
-    std::cout << "[Info] Resource directory: " << src_dir_ << std::endl;
-
     // ========== 初始化缓存管理器 ==========
     cache_manager_ = std::make_unique<CacheManager>();
-    std::cout << "[Info] Cache manager initialized" << std::endl;
 
     // ========== 设置新连接回调 ==========
     // 绑定NewConnection到Acceptor的回调，Acceptor接受连接后触发
@@ -87,12 +84,38 @@ Server::~Server() {}
  * 3. 启动主Reactor的事件循环（base_loop_->Loop()）
  */
 void Server::Start() {
-    // 初始化MySQL连接池
+    int cpu_cores = std::thread::hardware_concurrency();
+    int io_threads = thread_pool_->GetThreadNum();
+    
+    int mysql_pool_size = io_threads * 2;
+    int redis_pool_size = io_threads * 2;
+    
+    std::cout << "==========================================" << std::endl;
+    std::cout << "   Reactor WebServer v1.0" << std::endl;
+    std::cout << "==========================================" << std::endl;
+    std::cout << "   CPU Logical Cores: " << cpu_cores << std::endl;
+    std::cout << "   IO Threads:        " << io_threads << std::endl;
+    std::cout << "   Listen Port:      " << port_ << std::endl;
+    std::cout << "   MySQL Host:       " << mysql_host_ << std::endl;
+    std::cout << "   MySQL User:       " << mysql_user_ << std::endl;
+    std::cout << "   MySQL Database:   " << mysql_database_ << std::endl;
+    std::cout << "   MySQL Pool Size:  " << mysql_pool_size << std::endl;
+    std::cout << "   Redis Host:       localhost" << std::endl;
+    std::cout << "   Redis Port:       6379" << std::endl;
+    std::cout << "   Redis Pool Size:  " << redis_pool_size << std::endl;
+    std::cout << "==========================================" << std::endl;
+    
+    std::cout << "[Info] Resource directory: " << src_dir_ << std::endl;
+    
     std::cout << "[Info] Initializing MySQL connection pool..." << std::endl;
     MySQLConnectionPool::GetInstance().Initialize(
-        mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, 0
+        mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, mysql_pool_size
     );
     
+    std::cout << "[Info] Initializing Redis connection pool..." << std::endl;
+    RedisCache::GetInstance().Initialize("localhost", 6379, "", 0, redis_pool_size);
+    
+    std::cout << "[Info] Cache manager initialized" << std::endl;
     std::cout << "[Info] Server start success!" << std::endl;
     // 启动IO线程池：创建thread_num个EventLoopThread并启动
     thread_pool_->Start();

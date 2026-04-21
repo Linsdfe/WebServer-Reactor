@@ -15,6 +15,7 @@
 #include "net/acceptor.h"
 #include "server/tcpconnection.h"
 #include "server/cachemanager.h"
+#include "server/redis_cache.h"
 #include <unordered_map>
 #include <memory>
 #include <string>

@@ -77,6 +77,11 @@ std::string Auth::HashPassword(const std::string& password) {
  * @return 查询结果：true=成功，false=失败
  */
 bool Auth::QueryUserFromDB(const std::string& username, std::string& password_hash) {
+    // 先从Redis缓存查询
+    if (RedisCache::GetInstance().Get("user:" + username, password_hash)) {
+        return true;
+    }
+    
     // 从连接池获取连接
     MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
     if (!conn) {
@@ -115,6 +120,8 @@ bool Auth::QueryUserFromDB(const std::string& username, std::string& password_ha
         if (row && row[0]) {
             password_hash = row[0];
             success = true;
+            // 将查询结果缓存到Redis
+            RedisCache::GetInstance().Set("user:" + username, password_hash, 3600);
         }
     }
     
@@ -173,6 +180,9 @@ std::string Auth::GenerateSessionId(const std::string& username) {
     auto now = std::chrono::steady_clock::now();
     session_expiry_[session_id] = now + std::chrono::seconds(SESSION_EXPIRY_SECONDS);
     
+    // 将会话信息缓存到Redis
+    RedisCache::GetInstance().Set("session:" + session_id, username, SESSION_EXPIRY_SECONDS);
+    
     return session_id;
 }
 
@@ -188,6 +198,14 @@ std::string Auth::GenerateSessionId(const std::string& username) {
  * 4. 验证通过则自动续期1小时
  */
 bool Auth::ValidateSession(const std::string& session_id) {
+    // 先从Redis缓存检查会话
+    std::string username;
+    if (RedisCache::GetInstance().Get("session:" + session_id, username)) {
+        // 会话有效，更新过期时间
+        RedisCache::GetInstance().Set("session:" + session_id, username, SESSION_EXPIRY_SECONDS);
+        return true;
+    }
+    
     std::lock_guard<std::mutex> lock(session_mutex_);
     
     // 每次验证前清理过期会话
@@ -201,6 +219,8 @@ bool Auth::ValidateSession(const std::string& session_id) {
         if (session_expiry_[session_id] > now) {
             // 会话有效，自动续期
             session_expiry_[session_id] = now + std::chrono::seconds(SESSION_EXPIRY_SECONDS);
+            // 将会话信息缓存到Redis
+            RedisCache::GetInstance().Set("session:" + session_id, it->second, SESSION_EXPIRY_SECONDS);
             return true;
         }
     }
@@ -230,6 +250,8 @@ void Auth::CleanExpiredSessions() {
     for (const auto& session_id : expired_sessions) {
         sessions_.erase(session_id);
         session_expiry_.erase(session_id);
+        // 从Redis中删除过期会话
+        RedisCache::GetInstance().Delete("session:" + session_id);
     }
 }
 
@@ -308,6 +330,11 @@ bool Auth::AddUser(const std::string& username, const std::string& password) {
     
     // 归还连接
     MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+    
+    if (affected_rows > 0) {
+        // 将新用户信息缓存到Redis
+        RedisCache::GetInstance().Set("user:" + username, hashed_password, 3600);
+    }
     
     return affected_rows > 0;
 }

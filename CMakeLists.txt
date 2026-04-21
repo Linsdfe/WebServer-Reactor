@@ -57,6 +57,8 @@ target_link_libraries(server PRIVATE pthread)
 target_link_libraries(server PRIVATE mysqlclient)
 # 链接OpenSSL库
 target_link_libraries(server PRIVATE ssl crypto)
+# 链接Redis库
+target_link_libraries(server PRIVATE hiredis)
 
 # ========== 输出目录 ==========
 # 设置可执行文件输出目录：build/bin

@@ -23,6 +23,7 @@
 #include <openssl/sha.h>
 #include <mutex>  // 线程锁
 #include "auth/mysql_connection_pool.h"
+#include "server/redis_cache.h"
 
 namespace reactor {
 

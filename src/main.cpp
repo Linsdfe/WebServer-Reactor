@@ -63,18 +63,6 @@ int main(int argc, char* argv[]) {
         thread_num = (cpu_core_num == 0) ? 8 : static_cast<int>(cpu_core_num * 2);
     }
 
-    // 打印启动信息（便于调试和日志查看）
-    std::cout << "==========================================" << std::endl;
-    std::cout << "  Reactor WebServer v1.0" << std::endl;
-    std::cout << "==========================================" << std::endl;
-    std::cout << "  CPU Logical Cores: " << cpu_core_num << std::endl;
-    std::cout << "  IO Threads:        " << thread_num << std::endl;
-    std::cout << "  Listen Port:       " << port << std::endl;
-    std::cout << "  MySQL Host:        " << mysql_host << std::endl;
-    std::cout << "  MySQL User:        " << mysql_user << std::endl;
-    std::cout << "  MySQL Database:    " << mysql_database << std::endl;
-    std::cout << "==========================================" << std::endl;
-
     // 初始化并启动服务器（阻塞直到退出）
     reactor::Server server(port, thread_num, mysql_host, mysql_user, mysql_password, mysql_database);
     server.Start();

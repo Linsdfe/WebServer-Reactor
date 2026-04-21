@@ -178,12 +178,12 @@ void MySQLConnectionPool::Initialize(const std::string& host, const std::string&
     // 自动计算连接池大小
     if (pool_size <= 0) {
         pool_size_ = CalculateOptimalPoolSize();
-        std::cout << "MySQL connection pool auto-calculated size: " << pool_size_ 
+        std::cout << "[MySQL] MySQL connection pool auto-calculated size: " << pool_size_ 
                   << " (CPU cores: " << GetCpuCoreCount() 
                   << ", threads: " << GetThreadCount() << ")" << std::endl;
     } else {
         pool_size_ = pool_size;
-        std::cout << "MySQL connection pool using configured size: " << pool_size_ << std::endl;
+        std::cout << "[MySQL] MySQL connection pool using configured size: " << pool_size_ << std::endl;
     }
 
     // 预创建连接
@@ -195,7 +195,7 @@ void MySQLConnectionPool::Initialize(const std::string& host, const std::string&
     }
 
     is_initialized_ = true;
-    std::cout << "MySQL connection pool initialized with " << connections_.size() << " connections" << std::endl;
+    std::cout << "[MySQL] MySQL connection pool initialized with " << connections_.size() << " connections" << std::endl;
 }
 
 /**

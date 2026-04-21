@@ -56,6 +56,12 @@ public:
      */
     EventLoop* GetNextLoop();
 
+    /**
+     * @brief 获取IO线程数量
+     * @return int IO线程数量
+     */
+    int GetThreadNum() const { return thread_num_; }
+
 private:
     EventLoop* base_loop_;                      // 主 Reactor 的 EventLoop
     bool started_;                               // 线程池是否已启动
