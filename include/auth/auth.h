@@ -143,13 +143,6 @@ private:
     std::string HashPassword(const std::string& password);
     
 private:
-    // 数据库配置
-    std::string db_host_;
-    std::string db_user_;
-    std::string db_pwd_;
-    std::string db_db_;
-
-    // 内存会话表：key=会话ID，value=用户名
     std::unordered_map<std::string, std::string> sessions_;
     
     // 会话过期时间表：key=会话ID，value=会话过期时间点

@@ -9,14 +9,13 @@
  * 4. 自动加载和更新缓存
  */
 
-#ifndef CACHEMANAGER_H
-#define CACHEMANAGER_H
+#pragma once
 
 #include <string>
 #include <unordered_map>
 #include <list>
 #include <memory>
-#include <pthread.h>
+#include <shared_mutex>
 
 namespace reactor {
 
@@ -85,9 +84,7 @@ private:
     // 缓存映射，值为pair<CacheItem, list iterator>
     std::unordered_map<std::string, std::pair<CacheItem, std::list<std::string>::iterator>> cache_;
 
-    pthread_rwlock_t rwlock_;  // POSIX读写锁，支持多读单写
+    std::shared_mutex rwlock_;
 };
 
 } // namespace reactor
-
-#endif // CACHEMANAGER_H

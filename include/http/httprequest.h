@@ -24,7 +24,7 @@ public:
     enum PARSE_STATE {
         REQUEST_LINE,  // 解析请求行（GET /index.html HTTP/1.1）
         HEADERS,       // 解析请求头（Connection: keep-alive等）
-        BODY,          // 解析请求体（本项目暂不处理POST）
+        BODY,          // 解析请求体（POST 表单数据）
         FINISH         // 解析完成
     };
 
@@ -124,7 +124,7 @@ private:
     std::string method_;         // 请求方法（GET/POST等）
     std::string path_;           // 请求路径
     std::string version_;        // HTTP版本（1.0/1.1）
-    std::string body_;           // 请求体（本项目暂不使用）
+    std::string body_;           // 请求体（POST 表单数据）
     std::string remaining_data_; // 粘包剩余数据（未解析）
     std::unordered_map<std::string, std::string> header_; // 请求头（key:value）
 };

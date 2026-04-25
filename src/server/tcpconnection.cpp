@@ -9,6 +9,7 @@
  * 4. 错误事件：触发关闭逻辑
  */
 #include "server/tcpconnection.h"
+#include "monitor/metrics_collector.h"
 #include <unistd.h>
 #include <errno.h>
 #include <fstream>
@@ -19,8 +20,25 @@
 #include <sys/sendfile.h>
 #include <fcntl.h>
 #include <cstring>
+#include <chrono>
 
 namespace reactor {
+
+static bool ParseFormData(const std::string& body, std::string& username, std::string& password) {
+    size_t pos = body.find("&");
+    if (pos == std::string::npos) return false;
+
+    std::string user_part = body.substr(0, pos);
+    std::string pass_part = body.substr(pos + 1);
+
+    size_t user_eq = user_part.find("=");
+    size_t pass_eq = pass_part.find("=");
+    if (user_eq == std::string::npos || pass_eq == std::string::npos) return false;
+
+    username = user_part.substr(user_eq + 1);
+    password = pass_part.substr(pass_eq + 1);
+    return true;
+}
 
 /**
  * @brief TcpConnection构造函数
@@ -102,7 +120,8 @@ void TcpConnection::HandleRead() {
         // 非阻塞读：recv返回-1且errno=EAGAIN时表示无数据
         read_len = recv(fd_, buff, sizeof(buff), 0);
         if (read_len > 0) {
-            all_data.append(buff, read_len); // 拼接数据
+            all_data.append(buff, read_len);
+            MetricsCollector::Instance().IncBytesRead(static_cast<size_t>(read_len));
         } else if (read_len == 0) {
             // 客户端关闭连接（FIN）→ 触发关闭逻辑
             HandleClose();
@@ -133,102 +152,98 @@ void TcpConnection::HandleRead() {
             std::string path = request_.path();
             std::string method = request_.method();
             bool keep_alive = request_.IsKeepAlive();
+
+            auto req_start = std::chrono::steady_clock::now();
+
+            MetricsCollector::Instance().IncTotalRequests();
+            MetricsCollector::Instance().IncRequestsByMethod(method);
+            MetricsCollector::Instance().IncRequestsByPath(path);
+
             // 提取剩余数据（粘包的下一个请求）
             all_data = request_.GetRemainingData();
             request_.ClearRemainingData();
 
-            // ========== 处理登录和注册请求 ==========
-            //std::cout << "[INFO] 收到请求：方法=" << method << ", 路径=" << path << std::endl;
-            if (method == "POST" && path == "/login") {
-                //std::cout << "[INFO] 处理登录请求" << std::endl;
-                // 解析请求体，获取用户名和密码
-                std::string body = request_.body();
-                //std::cout << "[INFO] 请求体：" << body << std::endl;
-                std::string username, password;
-                
-                // 解析表单数据：username=xxx&password=xxx
-                size_t pos = body.find("&");
-                if (pos != std::string::npos) {
-                    std::string user_part = body.substr(0, pos);
-                    std::string pass_part = body.substr(pos + 1);
-                    
-                    size_t user_eq = user_part.find("=");
-                    size_t pass_eq = pass_part.find("=");
-                    
-                    if (user_eq != std::string::npos && pass_eq != std::string::npos) {
-                        username = user_part.substr(user_eq + 1);
-                        password = pass_part.substr(pass_eq + 1);
-                    }
+            // ========== 处理 /metrics 监控端点 ==========
+            if (method == "GET" && path == "/metrics") {
+                if (cache_manager_) {
+                    size_t cache_items = 0, cache_size = 0;
+                    cache_manager_->GetStats(cache_items, cache_size);
+                    MetricsCollector::Instance().UpdateCacheStats(cache_items, cache_size);
                 }
+                std::string metrics_content = MetricsCollector::Instance().ExportPrometheus();
+                response_.Init(src_dir_, path, keep_alive, 200);
+                response_.SetContentType("text/plain; version=0.0.4; charset=utf-8");
+                response_.MakeResponse(send_buffer_, metrics_content);
+                request_.Init();
+
+                auto req_end = std::chrono::steady_clock::now();
+                double duration = std::chrono::duration<double>(req_end - req_start).count();
+                MetricsCollector::Instance().RecordRequestDuration(duration);
+                MetricsCollector::Instance().IncResponsesByStatus(200);
+
+                if (!send_buffer_.empty()) {
+                    channel_->EnableWriting();
+                }
+                has_more = !all_data.empty();
+                continue;
+            }
+
+            if (method == "POST" && path == "/login") {
+                std::string body = request_.body();
+                std::string username, password;
+                ParseFormData(body, username, password);
                 
-                //std::cout << "[INFO] 登录请求：用户名=" << username << ", 密码=" << (password.empty() ? "空" : "***") << std::endl;
-                // 验证用户
                 bool success = auth_.ValidateUser(username, password);
                 
-                // 构建JSON响应
                 std::string response_json;
                 if (success) {
                     std::string session_id = auth_.GenerateSessionId(username);
                     response_json = "{\"success\": true, \"message\": \"登录成功\", \"session_id\": \"" + session_id + "\"}";
-                    //std::cout << "[INFO] 用户登录成功：" << username << std::endl;
                 } else {
                     response_json = "{\"success\": false, \"message\": \"用户名或密码错误\"}";
-                    //std::cout << "[INFO] 用户登录失败：" << username << std::endl;
                 }
                 
-                // 构建HTTP响应
                 response_.Init(src_dir_, path, keep_alive, 200);
                 response_.MakeResponse(send_buffer_, response_json);
-                request_.Init(); // 重置请求解析器（复用）
-                //std::cout << "[INFO] 登录响应已发送" << std::endl;
+                request_.Init();
+
+                auto req_end_login = std::chrono::steady_clock::now();
+                double duration_login = std::chrono::duration<double>(req_end_login - req_start).count();
+                MetricsCollector::Instance().RecordRequestDuration(duration_login);
+                MetricsCollector::Instance().IncResponsesByStatus(success ? 200 : 401);
             } else if (method == "POST" && path == "/register") {
-                //std::cout << "[INFO] 处理注册请求" << std::endl;
-                // 解析请求体，获取用户名和密码
                 std::string body = request_.body();
-                //std::cout << "[INFO] 请求体：" << body << std::endl;
                 std::string username, password;
+                ParseFormData(body, username, password);
                 
-                // 解析表单数据：username=xxx&password=xxx
-                size_t pos = body.find("&");
-                if (pos != std::string::npos) {
-                    std::string user_part = body.substr(0, pos);
-                    std::string pass_part = body.substr(pos + 1);
-                    
-                    size_t user_eq = user_part.find("=");
-                    size_t pass_eq = pass_part.find("=");
-                    
-                    if (user_eq != std::string::npos && pass_eq != std::string::npos) {
-                        username = user_part.substr(user_eq + 1);
-                        password = pass_part.substr(pass_eq + 1);
-                    }
-                }
-                
-                //std::cout << "[INFO] 注册请求：用户名=" << username << ", 密码=" << (password.empty() ? "空" : "***") << std::endl;
-                // 添加用户
                 bool success = auth_.AddUser(username, password);
                 
-                // 构建JSON响应
                 std::string response_json;
                 if (success) {
                     response_json = "{\"success\": true, \"message\": \"注册成功\"}";
-                    //std::cout << "[INFO] 用户注册成功：" << username << std::endl;
                 } else {
                     response_json = "{\"success\": false, \"message\": \"注册失败，用户名可能已存在\"}";
-                    //std::cout << "[INFO] 用户注册失败：" << username << std::endl;
                 }
                 
-                // 构建HTTP响应
                 response_.Init(src_dir_, path, keep_alive, 200);
                 response_.MakeResponse(send_buffer_, response_json);
-                request_.Init(); // 重置请求解析器（复用）
-                //std::cout << "[INFO] 注册响应已发送" << std::endl;
+                request_.Init();
+
+                auto req_end_register = std::chrono::steady_clock::now();
+                double duration_register = std::chrono::duration<double>(req_end_register - req_start).count();
+                MetricsCollector::Instance().RecordRequestDuration(duration_register);
+                MetricsCollector::Instance().IncResponsesByStatus(success ? 200 : 409);
             } else {
                 // ========== 处理静态文件GET请求 ==========
                 // 优先使用零拷贝路径（sendfile），失败时回退到普通读取
                 response_.Init(src_dir_, path, keep_alive, 200);
 
-                if (response_.IsZeroCopy() && response_.GetFileSize() > 24 * 1024) {
+                // 检查是否是dashboard.html（大文件需要强制内存缓存）
+                bool is_dashboard = (path.find("dashboard.html") != std::string::npos);
+
+                if (response_.IsZeroCopy() && response_.GetFileSize() > 24 * 1024 && !is_dashboard) {
                     // 零拷贝路径（sendfile）：文件大于24KB时使用，避免内核→用户态→内核的拷贝开销
+                    // 注意：dashboard.html强制使用内存缓存，不走零拷贝
                     const std::string& file_path = response_.GetFilePath();
                     file_fd_ = open(file_path.c_str(), O_RDONLY);
                     if (file_fd_ >= 0) {
@@ -240,14 +255,18 @@ void TcpConnection::HandleRead() {
                     }
                 } else {
                     // 用户内存缓存路径：文件小于等于24KB时使用，减少系统调用开销
+                    // dashboard.html始终使用内存缓存
                     std::string full_path = src_dir_ + path;
                     std::string file_content;
                     int code = 200;
 
                     // 尝试从缓存获取
                     if (cache_manager_ && cache_manager_->GetCache(full_path, file_content)) {
-                        // 缓存命中
+                        MetricsCollector::Instance().IncCacheHits();
+                        MetricsCollector::Instance().IncMemoryCacheHits();  // GET内存缓存命中
                     } else {
+                        MetricsCollector::Instance().IncCacheMisses();
+                        MetricsCollector::Instance().IncMemoryCacheMisses();  // GET内存缓存未命中
                         // 缓存未命中，读取文件
                         std::ifstream file(full_path, std::ios::binary);
                         if (!file.is_open()) {
@@ -264,9 +283,10 @@ void TcpConnection::HandleRead() {
                                 if (!file) {
                                     code = 500;
                                     file_content.clear();
-                                } else if (cache_manager_ && size <= 24 * 1024) {
-                                    // 缓存小文件（≤24KB）
+                                } else if (cache_manager_ && (size <= 24 * 1024 || is_dashboard)) {
+                                    // 缓存小文件（≤24KB）或dashboard.html（强制缓存）
                                     cache_manager_->SetCache(full_path, file_content);
+                                    MetricsCollector::Instance().IncMemoryCacheUpdates();  // 内存缓存更新
                                 }
                             }
                             file.close();
@@ -278,6 +298,10 @@ void TcpConnection::HandleRead() {
                 }
 
                 request_.Init();
+
+                auto req_end_static = std::chrono::steady_clock::now();
+                double duration_static = std::chrono::duration<double>(req_end_static - req_start).count();
+                MetricsCollector::Instance().RecordRequestDuration(duration_static);
             }
 
             // ========== 触发写事件 ==========
@@ -316,6 +340,7 @@ void TcpConnection::HandleWrite() {
             int len = send(fd_, ptr + bytes_sent, bytes_to_send - bytes_sent, 0);
             if (len > 0) {
                 bytes_sent += len;
+                MetricsCollector::Instance().IncBytesWritten(static_cast<size_t>(len));
             } else if (len < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     send_buffer_ = std::string(ptr + bytes_sent, bytes_to_send - bytes_sent);

@@ -9,6 +9,7 @@
  */
 #include "server/server.h"
 #include "auth/mysql_connection_pool.h"
+#include "monitor/metrics_collector.h"
 #include <unistd.h>
 #include <iostream>
 
@@ -22,6 +23,8 @@ namespace reactor {
  * @param mysql_user MySQL用户名
  * @param mysql_password MySQL密码
  * @param mysql_database MySQL数据库名
+ * @param mysql_slaves MySQL从库配置列表
+ * @param redis_slaves Redis从库配置列表
  * 
  * 初始化流程：
  * 1. 创建主Reactor（base_loop_）
@@ -29,13 +32,15 @@ namespace reactor {
  * 3. 创建Acceptor（负责监听端口、接受新连接）
  * 4. 定位静态资源目录（优先可执行文件目录，兜底当前目录）
  * 5. 设置新连接回调函数
- * 6. 初始化MySQL连接参数
+ * 6. 初始化MySQL和Redis连接参数
  */
 Server::Server(int port, int thread_num, 
                const std::string& mysql_host, 
                const std::string& mysql_user, 
                const std::string& mysql_password, 
-               const std::string& mysql_database)
+               const std::string& mysql_database,
+               const std::vector<MySQLNodeConfig>& mysql_slaves,
+               const std::vector<RedisNodeConfig>& redis_slaves)
     : base_loop_(new EventLoop()),
       thread_pool_(new EventLoopThreadPool(base_loop_.get(), thread_num)),
       acceptor_(new Acceptor(base_loop_.get(), port)),
@@ -43,7 +48,9 @@ Server::Server(int port, int thread_num,
       mysql_host_(mysql_host),
       mysql_user_(mysql_user),
       mysql_password_(mysql_password),
-      mysql_database_(mysql_database) {
+      mysql_database_(mysql_database),
+      mysql_slaves_(mysql_slaves),
+      redis_slaves_(redis_slaves) {
     
     // ========== 定位静态资源目录（www） ==========
     char path[256];
@@ -103,19 +110,75 @@ void Server::Start() {
     std::cout << "   Redis Host:       localhost" << std::endl;
     std::cout << "   Redis Port:       6379" << std::endl;
     std::cout << "   Redis Pool Size:  " << redis_pool_size << std::endl;
+    if (!redis_slaves_.empty()) {
+        std::cout << "   Redis Slaves:     " << redis_slaves_.size() << std::endl;
+        for (size_t i = 0; i < redis_slaves_.size(); ++i) {
+            std::cout << "     Slave-" << i << ": " << redis_slaves_[i].host << ":" << redis_slaves_[i].port << std::endl;
+        }
+    }
     std::cout << "==========================================" << std::endl;
     
     std::cout << "[Info] Resource directory: " << src_dir_ << std::endl;
     
     std::cout << "[Info] Initializing MySQL connection pool..." << std::endl;
-    MySQLConnectionPool::GetInstance().Initialize(
-        mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, mysql_pool_size
+    if (mysql_slaves_.empty()) {
+        MySQLConnectionPool::GetInstance().Initialize(
+            mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, mysql_pool_size
+        );
+    } else {
+        MySQLNodeConfig master_config;
+        master_config.host = mysql_host_;
+        master_config.port = 3306;
+        master_config.user = mysql_user_;
+        master_config.password = mysql_password_;
+        master_config.database = mysql_database_;
+        master_config.pool_size = mysql_pool_size;
+        
+        MySQLConnectionPool::GetInstance().InitializeWithSlaves(master_config, mysql_slaves_);
+        MySQLConnectionPool::GetInstance().EnableSemiSync(3000);
+        std::cout << "[Info] MySQL master-slave replication enabled with " << mysql_slaves_.size() << " slaves" << std::endl;
+    }
+
+    MySQLConnectionPool::GetInstance().SetReplicationLagAlert(5000);
+    MySQLConnectionPool::GetInstance().SetFailoverCallback(
+        [](const std::string& old_master, const std::string& new_master) {
+            std::cerr << "[MySQL-FAILOVER] Master changed: " << old_master << " -> " << new_master << std::endl;
+            MetricsCollector::Instance().IncMySQLFailovers();
+        }
     );
+    MySQLConnectionPool::GetInstance().SetHealthAlertCallback(
+        [](const std::string& node, bool is_healthy) {
+            if (!is_healthy) {
+                std::cerr << "[MySQL-ALERT] Node " << node << " is unhealthy!" << std::endl;
+            }
+        }
+    );
+    MySQLConnectionPool::GetInstance().StartHealthCheck(10);
     
     std::cout << "[Info] Initializing Redis connection pool..." << std::endl;
-    RedisCache::GetInstance().Initialize("localhost", 6379, "", 0, redis_pool_size);
+    if (redis_slaves_.empty()) {
+        RedisCache::GetInstance().Initialize("localhost", 6379, "", 0, redis_pool_size);
+    } else {
+        RedisNodeConfig master_config("localhost", 6379, "", 0, redis_pool_size);
+        RedisCache::GetInstance().InitializeWithSlaves(master_config, redis_slaves_);
+    }
+
+    RedisCache::GetInstance().SetFailoverCallback(
+        [](const std::string& old_master, const std::string& new_master) {
+            std::cerr << "[Redis-FAILOVER] Master changed: " << old_master << " -> " << new_master << std::endl;
+        }
+    );
+    RedisCache::GetInstance().SetHealthAlertCallback(
+        [](const std::string& node, bool is_healthy) {
+            if (!is_healthy) {
+                std::cerr << "[Redis-ALERT] Node " << node << " is unhealthy!" << std::endl;
+            }
+        }
+    );
+    RedisCache::GetInstance().StartHealthCheck(10);
     
     std::cout << "[Info] Cache manager initialized" << std::endl;
+    std::cout << "[Info] Metrics endpoint: http://localhost:" << port_ << "/metrics" << std::endl;
     std::cout << "[Info] Server start success!" << std::endl;
     // 启动IO线程池：创建thread_num个EventLoopThread并启动
     thread_pool_->Start();
@@ -138,10 +201,11 @@ void Server::Start() {
  * 5. 在从Reactor线程中初始化连接（注册fd到epoll）
  */
 void Server::NewConnection(int sockfd, const struct sockaddr_in& addr) {
-    (void)addr; // 显式标记未使用参数，避免编译警告
-    base_loop_->AssertInLoopThread(); // 确保在主Reactor线程执行
-    
-    // 轮询获取下一个IO线程的EventLoop（Round-Robin负载均衡）
+    (void)addr;
+    base_loop_->AssertInLoopThread();
+
+    MetricsCollector::Instance().IncTotalConnections();
+
     EventLoop* io_loop = thread_pool_->GetNextLoop();
 
     // 创建TCP连接对象：托管到智能指针，保证生命周期
@@ -180,13 +244,14 @@ void Server::RemoveConnection(int sockfd) {
  * 3. 在从Reactor线程中销毁连接（注销epoll、关闭fd）
  */
 void Server::RemoveConnectionInLoop(int sockfd) {
-    base_loop_->AssertInLoopThread(); // 确保线程安全
+    base_loop_->AssertInLoopThread();
     auto it = connections_.find(sockfd);
     if (it != connections_.end()) {
         std::shared_ptr<TcpConnection> conn = it->second;
-        connections_.erase(it); // 从映射表移除
-        
-        // 在IO线程中销毁连接（注销epoll事件、关闭fd）
+        connections_.erase(it);
+
+        MetricsCollector::Instance().DecTotalConnections();
+
         EventLoop* io_loop = conn->GetLoop();
         io_loop->RunInLoop(std::bind(&TcpConnection::ConnectDestroyed, conn));
     }

@@ -88,6 +88,7 @@ void HttpResponse::Init(const std::string& srcDir, std::string& path, bool isKee
     }
     file_path_ = temp + path_;
     is_static_file_ = false;
+    content_type_override_.clear();
     memset(&mmFileStat_, 0, sizeof(mmFileStat_));
 
     if (stat(file_path_.c_str(), &mmFileStat_) == 0 && S_ISREG(mmFileStat_.st_mode)) {
@@ -137,6 +138,12 @@ void HttpResponse::MakeResponseHeader(std::string& response, size_t file_size) {
     response += "\r\n";
 }
 
+/**
+ * @brief 构建错误响应报文
+ * @param response 输出参数：拼接后的响应报文
+ * @param error_code HTTP 错误状态码（如 404、500）
+ * @param error_msg 错误信息内容
+ */
 void HttpResponse::MakeErrorResponse(std::string& response, int error_code, const std::string& error_msg) {
     code_ = error_code;
     response.reserve(128);
@@ -188,8 +195,12 @@ void HttpResponse::AddHeader(std::string& response, size_t content_length) {
         // 短连接：关闭连接
         response += "close\r\n";
     }
-    // Content-Type：根据文件后缀映射
-    response += "Content-Type: " + GetFileType() + "\r\n";
+    // Content-Type：优先使用自定义类型，否则根据文件后缀映射
+    if (!content_type_override_.empty()) {
+        response += "Content-Type: " + content_type_override_ + "\r\n";
+    } else {
+        response += "Content-Type: " + GetFileType() + "\r\n";
+    }
     // Content-Length：响应体大小
     if (content_length > 0) {
         response += "Content-Length: " + std::to_string(content_length) + "\r\n";

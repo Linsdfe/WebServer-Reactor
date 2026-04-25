@@ -26,7 +26,7 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # 警告选项：Wall（基础警告）+ Wextra（额外警告）+ Wpedantic（严格语法）
     add_compile_options(-Wall -Wextra -Wpedantic)
-    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -march=native -flto -fno-exceptions -funroll-loops")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -march=native -flto -funroll-loops")
     # ========== 【修复点2】加固调试配置：强制无优化+调试信息 ==========
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG -fno-omit-frame-pointer")
 endif()
@@ -43,7 +43,7 @@ file(GLOB_RECURSE SOURCE_FILES
     "src/server/*.cpp"
     "src/main.cpp"
     "src/auth/*.cpp"
-    
+    "src/monitor/*.cpp"
 )
 
 # ========== 可执行文件 ==========

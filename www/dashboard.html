@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统运行状态监控面板</title>
+<style>
+:root {
+    --bg-primary: #0f1923;
+    --bg-secondary: #1a2733;
+    --bg-card: #1e3044;
+    --bg-card-hover: #243b52;
+    --border-color: #2a4a6b;
+    --text-primary: #e8f0f8;
+    --text-secondary: #8ba4bc;
+    --text-muted: #5a7a96;
+    --accent-blue: #3b82f6;
+    --accent-cyan: #06b6d4;
+    --accent-green: #10b981;
+    --accent-yellow: #f59e0b;
+    --accent-red: #ef4444;
+    --accent-purple: #8b5cf6;
+    --accent-pink: #ec4899;
+    --shadow: 0 4px 24px rgba(0,0,0,0.3);
+    --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+.header {
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+    border-bottom: 1px solid var(--border-color);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.header-title {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: pulse 2s infinite;
+}
+.status-dot.error { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+.status-dot.loading { background: var(--accent-yellow); box-shadow: 0 0 8px var(--accent-yellow); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+.header-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.btn:hover { background: var(--bg-card-hover); border-color: var(--accent-blue); }
+.btn-primary { background: var(--accent-blue); border-color: var(--accent-blue); }
+.btn-primary:hover { background: #2563eb; }
+.select-wrap { position: relative; }
+.select-wrap select {
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+}
+.select-wrap::after {
+    content: '▼';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+.last-update { font-size: 12px; color: var(--text-muted); }
+.main { padding: 24px; max-width: 1600px; margin: 0 auto; }
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 24px 0 16px;
+    padding-left: 12px;
+    border-left: 3px solid var(--accent-cyan);
+}
+.overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 32px;
+}
+.overview-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(30,48,68,0.8) 100%);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.overview-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--accent-blue); }
+.overview-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+}
+.overview-card.green::before { background: linear-gradient(90deg, #059669, var(--accent-green)); }
+.overview-card.yellow::before { background: linear-gradient(90deg, #d97706, var(--accent-yellow)); }
+.overview-card.red::before { background: linear-gradient(90deg, #dc2626, var(--accent-red)); }
+.overview-card.purple::before { background: linear-gradient(90deg, #7c3aed, var(--accent-purple)); }
+.overview-card.pink::before { background: linear-gradient(90deg, #db2777, var(--accent-pink)); }
+.card-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.card-value.blue { color: var(--accent-blue); }
+.card-value.cyan { color: var(--accent-cyan); }
+.card-value.green { color: var(--accent-green); }
+.card-value.yellow { color: var(--accent-yellow); }
+.card-value.red { color: var(--accent-red); }
+.card-value.purple { color: var(--accent-purple); }
+.card-sub { font-size: 11px; color: var(--text-muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+    gap: 24px;
+    margin-bottom: 32px;
+}
+.chart-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(30,48,68,0.8) 100%);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: all 0.3s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.chart-card:hover { box-shadow: var(--shadow); }
+.chart-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.chart-title .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(59,130,246,0.15);
+    color: var(--accent-blue);
+}
+.chart-container { position: relative; width: 100%; height: 260px; }
+.gauges-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 32px;
+}
+.gauge-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+}
+.gauge-canvas { width: 160px; height: 90px; margin: 0 auto 8px; }
+.gauge-label { font-size: 12px; color: var(--text-muted); }
+.gauge-value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+.table-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
+.data-table th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.data-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(42,74,107,0.3);
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.data-table tr:hover td { background: rgba(59,130,246,0.05); }
+.metric-name { color: var(--accent-cyan); font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
+.metric-cn { color: var(--text-secondary); font-size: 12px; }
+.metric-value { font-weight: 600; font-family: 'Consolas', 'Monaco', monospace; }
+.metric-type {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+.type-counter { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+.type-gauge { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+.type-histogram { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
+.report-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(30,48,68,0.8) 100%);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 24px;
+}
+.report-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+}
+.report-item {
+    padding: 14px;
+    border-radius: 8px;
+    background: rgba(15,25,35,0.5);
+    border-left: 3px solid var(--accent-blue);
+}
+.report-item.good { border-left-color: var(--accent-green); }
+.report-item.warn { border-left-color: var(--accent-yellow); }
+.report-item.bad { border-left-color: var(--accent-red); }
+.report-item-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.report-item-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.loading-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15,25,35,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    flex-direction: column;
+    gap: 16px;
+}
+.spinner {
+    width: 40px; height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast {
+    position: fixed;
+    top: 80px;
+    right: 24px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: 1000;
+    transform: translateX(120%);
+    transition: transform 0.3s;
+    max-width: 360px;
+}
+.toast.show { transform: translateX(0); }
+.toast.error { background: rgba(239,68,68,0.9); color: white; }
+.toast.success { background: rgba(16,185,129,0.9); color: white; }
+.toast.warn { background: rgba(245,158,11,0.9); color: white; }
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.filter-tag {
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+.filter-tag:hover { border-color: var(--accent-blue); color: var(--text-primary); }
+.filter-tag.active { background: var(--accent-blue); border-color: var(--accent-blue); color: white; }
+.trend-indicator { font-size: 12px; margin-left: 6px; }
+.trend-up { color: var(--accent-green); }
+.trend-down { color: var(--accent-red); }
+.trend-stable { color: var(--text-muted); }
+.legend-container { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; justify-content: center; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+@media (max-width: 768px) {
+    .header { padding: 12px 16px; }
+    .header-title { font-size: 18px; }
+    .main { padding: 12px; }
+    .overview-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .overview-card { padding: 14px; }
+    .card-value { font-size: 22px; }
+    .charts-grid { grid-template-columns: 1fr; }
+    .chart-container { height: 220px; }
+    .gauges-grid { grid-template-columns: repeat(2, 1fr); }
+    .report-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+    .overview-grid { grid-template-columns: 1fr; }
+    .gauges-grid { grid-template-columns: 1fr; }
+    .header-right { width: 100%; justify-content: flex-end; }
+}
+</style>
+</head>
+<body>
+
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <div style="color:var(--text-secondary);font-size:14px;">正在加载监控数据...</div>
+</div>
+
+<div id="toastContainer"></div>
+
+<header class="header">
+    <div class="header-left">
+        <div id="statusDot" class="status-dot loading"></div>
+        <div class="header-title">系统运行状态监控面板</div>
+    </div>
+    <div class="header-right">
+        <div class="select-wrap">
+            <select id="refreshInterval">
+                <option value="100">每0.1秒</option>
+                <option value="0">手动刷新</option>
+                <option value="5000">每5秒</option>
+                <option value="10000" selected>每10秒</option>
+                <option value="30000">每30秒</option>
+                <option value="60000">每60秒</option>
+            </select>
+        </div>
+        <div class="select-wrap">
+            <select id="timeRange">
+                <option value="60">最近1分钟</option>
+                <option value="300" selected>最近5分钟</option>
+                <option value="600">最近10分钟</option>
+                <option value="1800">最近30分钟</option>
+                <option value="0">全部数据</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" id="refreshBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            刷新
+        </button>
+        <div class="last-update" id="lastUpdate">尚未更新</div>
+    </div>
+</header>
+
+<main class="main">
+    <div class="section-title">核心指标概览</div>
+    <div class="overview-grid" id="overviewGrid"></div>
+
+    <div class="section-title">性能仪表盘</div>
+    <div class="gauges-grid" id="gaugesGrid"></div>
+
+    <div class="section-title">趋势图表</div>
+    <div class="charts-grid" id="chartsGrid">
+        <div class="chart-card">
+            <div class="chart-title">
+                http_request_duration_seconds (请求耗时分布)
+                <span class="badge">HISTOGRAM</span>
+            </div>
+            <div class="chart-container"><canvas id="durationChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                http_requests_by_method (请求方法分布)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="methodChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                http_responses_by_status (响应状态码分布)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="statusChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                http_requests_by_path (请求路径分布)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="pathChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                IO吞吐量趋势 (IO Throughput Trend)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="ioChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                连接数趋势 (Connection Trend)
+                <span class="badge">GAUGE</span>
+            </div>
+            <div class="chart-container"><canvas id="connectionChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="section-title">缓存分析</div>
+    <div class="charts-grid">
+        <div class="chart-card">
+            <div class="chart-title">
+                内存缓存分析 (Memory Cache - GET)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="memCacheChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                Redis缓存分析 (Redis Cache - POST)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="redisCacheChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="section-title">数据库主从监控</div>
+    <div class="overview-grid" id="dbOverviewGrid"></div>
+    <div class="charts-grid">
+        <div class="chart-card">
+            <div class="chart-title">
+                MySQL主库连接池 (Master Pool)
+                <span class="badge">GAUGE</span>
+            </div>
+            <div class="chart-container"><canvas id="mysqlPoolChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                MySQL从库复制延迟 (Replication Lag)
+                <span class="badge">GAUGE</span>
+            </div>
+            <div class="chart-container"><canvas id="mysqlLagChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                MySQL读写分离 (Read/Write Split)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="mysqlSplitChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">
+                Redis主从状态 (Redis Replication)
+                <span class="badge">COUNTER</span>
+            </div>
+            <div class="chart-container"><canvas id="redisReplicationChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="section-title">指标明细</div>
+    <div class="filter-bar" id="filterBar">
+        <span class="filter-tag active" data-filter="all">全部</span>
+        <span class="filter-tag" data-filter="counter">Counter</span>
+        <span class="filter-tag" data-filter="gauge">Gauge</span>
+        <span class="filter-tag" data-filter="histogram">Histogram</span>
+    </div>
+    <div class="table-card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>指标名称 (中文名称)</th>
+                    <th>类型</th>
+                    <th>标签</th>
+                    <th>当前值</th>
+                    <th>趋势</th>
+                </tr>
+            </thead>
+            <tbody id="metricsTableBody"></tbody>
+        </table>
+    </div>
+
+    <div class="section-title">系统分析报告</div>
+    <div class="report-card" id="reportCard">
+        <div class="report-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            自动分析报告
+        </div>
+        <div class="report-grid" id="reportGrid"></div>
+    </div>
+</main>
+
+<script>
+(function() {
+    'use strict';
+
+    var METRICS_CN = {
+        'http_requests_total': 'HTTP请求总数',
+        'http_requests_by_method': '按方法分类的请求数',
+        'http_requests_by_path': '按路径分类的请求数',
+        'http_responses_by_status': '按状态码分类的响应数',
+        'http_request_duration_seconds': 'HTTP请求耗时(秒)',
+        'http_connections_total': '连接接受总数',
+        'http_active_connections': '当前活跃连接数',
+        'http_bytes_read_total': '读取字节总数',
+        'http_bytes_written_total': '写入字节总数',
+        'cache_hits_total': '缓存命中总数',
+        'cache_misses_total': '缓存未命中总数',
+        'cache_size_bytes': '当前缓存大小(字节)',
+        'cache_items': '当前缓存项数量',
+        'memory_cache_hits_total': 'GET请求内存缓存命中数',
+        'memory_cache_misses_total': 'GET请求内存缓存未命中数',
+        'memory_cache_updates_total': 'GET请求内存缓存更新数',
+        'redis_cache_hits_total': 'POST请求Redis缓存命中数',
+        'redis_cache_misses_total': 'POST请求Redis缓存未命中数',
+        'redis_cache_updates_total': 'POST请求Redis缓存更新数',
+        'redis_cache_expirations_total': 'POST请求Redis缓存过期数',
+        'redis_slave_hits_total': 'Redis从库命中数',
+        'redis_slave_misses_total': 'Redis从库未命中数',
+        'redis_slave_fallbacks_total': 'Redis从库降级到主库次数',
+        'redis_slave_count': 'Redis从库数量',
+        'redis_slave_healthy': 'Redis从库健康状态',
+        'mysql_slave_hits_total': 'MySQL从库命中数',
+        'mysql_slave_misses_total': 'MySQL从库未命中数',
+        'mysql_slave_fallbacks_total': 'MySQL从库降级到主库次数',
+        'mysql_slave_count': 'MySQL从库数量',
+        'mysql_slave_healthy': 'MySQL从库健康状态',
+        'mysql_slave_replication_lag_ms': 'MySQL从库复制延迟(毫秒)',
+        'mysql_master_pool_idle': 'MySQL主库空闲连接数',
+        'mysql_master_pool_active': 'MySQL主库活跃连接数',
+        'mysql_master_pool_size': 'MySQL主库连接池大小',
+        'mysql_failovers_total': 'MySQL主库故障转移次数',
+        'mysql_backups_total': 'MySQL数据备份次数',
+        'mysql_semi_sync_enabled': 'MySQL半同步复制状态'
+    };
+
+    var CHART_COLORS = [
+        '#3b82f6','#06b6d4','#10b981','#f59e0b','#ef4444',
+        '#8b5cf6','#ec4899','#6366f1','#14b8a6','#f97316'
+    ];
+
+    var historyData = [];
+    var MAX_HISTORY = 360;
+    var refreshTimer = null;
+    var chartInstances = {};
+    var currentFilter = 'all';
+    var previousMetrics = null;
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        var k = 1024;
+        var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatNumber(num) {
+        if (num === undefined || num === null) return '0';
+        if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+        if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+        return Number.isInteger(num) ? num.toString() : num.toFixed(2);
+    }
+
+    function formatTime(date) {
+        var h = date.getHours().toString().padStart(2, '0');
+        var m = date.getMinutes().toString().padStart(2, '0');
+        var s = date.getSeconds().toString().padStart(2, '0');
+        return h + ':' + m + ':' + s;
+    }
+
+    function showToast(msg, type) {
+        var container = document.getElementById('toastContainer');
+        var toast = document.createElement('div');
+        toast.className = 'toast ' + (type || 'error');
+        toast.textContent = msg;
+        container.appendChild(toast);
+        requestAnimationFrame(function() { toast.classList.add('show'); });
+        setTimeout(function() {
+            toast.classList.remove('show');
+            setTimeout(function() { if (container.contains(toast)) container.removeChild(toast); }, 300);
+        }, 3000);
+    }
+
+    function parsePrometheus(text) {
+        var metrics = {};
+        var lines = text.split('\n');
+        var currentName = null;
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line) continue;
+
+            if (line.startsWith('# HELP')) {
+                var parts = line.substring(8).match(/^(\S+)\s+(.*)$/);
+                if (parts) {
+                    currentName = parts[1];
+                    if (!metrics[currentName]) metrics[currentName] = { name: currentName, help: parts[2], type: 'unknown', samples: [] };
+                    else metrics[currentName].help = parts[2];
+                }
+            } else if (line.startsWith('# TYPE')) {
+                var typeParts = line.substring(8).match(/^(\S+)\s+(\S+)$/);
+                if (typeParts) {
+                    currentName = typeParts[1];
+                    if (!metrics[currentName]) metrics[currentName] = { name: currentName, help: '', type: typeParts[2].toLowerCase(), samples: [] };
+                    else metrics[currentName].type = typeParts[2].toLowerCase();
+                }
+            } else {
+                var match = line.match(/^(\S+?)(?:\{([^}]*)\})?\s+([\d.eE+\-]+)$/);
+                if (match) {
+                    var sName = match[1];
+                    var labelsStr = match[2] || '';
+                    var value = parseFloat(match[3]);
+                    var labels = {};
+                    if (labelsStr) {
+                        var pairs = labelsStr.split(',');
+                        for (var j = 0; j < pairs.length; j++) {
+                            var kv = pairs[j].match(/^(\S+?)="(.*)"$/);
+                            if (kv) labels[kv[1]] = kv[2];
+                        }
+                    }
+                    if (!metrics[sName]) metrics[sName] = { name: sName, help: '', type: 'unknown', samples: [] };
+                    metrics[sName].samples.push({ labels: labels, value: value });
+                }
+            }
+        }
+        return metrics;
+    }
+
+    function getMetricValue(metrics, name, labelFilter) {
+        var m = metrics[name];
+        if (!m) return 0;
+        for (var i = 0; i < m.samples.length; i++) {
+            var s = m.samples[i];
+            if (!labelFilter) return s.value;
+            var match = true;
+            for (var k in labelFilter) {
+                if (s.labels[k] !== labelFilter[k]) { match = false; break; }
+            }
+            if (match) return s.value;
+        }
+        return 0;
+    }
+
+    function getTrend(current, previous) {
+        if (previous === null || previous === undefined) return 'stable';
+        if (current > previous) return 'up';
+        if (current < previous) return 'down';
+        return 'stable';
+    }
+
+    function getTrendHTML(current, previous) {
+        var trend = getTrend(current, previous);
+        if (trend === 'up') return '<span class="trend-indicator trend-up">▲ +' + formatNumber(current - previous) + '</span>';
+        if (trend === 'down') return '<span class="trend-indicator trend-down">▼ ' + formatNumber(current - previous) + '</span>';
+        return '<span class="trend-indicator trend-stable">■ 持平</span>';
+    }
+
+    function drawGauge(canvasId, value, max, label, unit, color) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.clientWidth;
+        var h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        var cx = w / 2;
+        var cy = h - 8;
+        var r = Math.max(10, Math.min(w, h * 1.2) * 0.55);
+        var startAngle = Math.PI;
+        var endAngle = 2 * Math.PI;
+        var pct = Math.min(value / Math.max(max, 0.001), 1);
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, startAngle, endAngle);
+        ctx.strokeStyle = 'rgba(42,74,107,0.4)';
+        ctx.lineWidth = 12;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        if (pct > 0) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, startAngle, startAngle + pct * Math.PI);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 12;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = '#e8f0f8';
+        ctx.font = 'bold 18px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText((pct * 100).toFixed(1) + '%', cx, cy - 14);
+
+        ctx.fillStyle = '#5a7a96';
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillText(unit, cx, cy + 4);
+    }
+
+    function drawLineChart(canvasId, labels, datasets, options) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.clientWidth;
+        var h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        var padding = { top: 15, right: 15, bottom: 35, left: 50 };
+        var chartW = w - padding.left - padding.right;
+        var chartH = h - padding.top - padding.bottom;
+
+        var allValues = [];
+        datasets.forEach(function(ds) { allValues = allValues.concat(ds.data); });
+        var maxVal = Math.max.apply(null, allValues.filter(function(v) { return isFinite(v); })) || 1;
+        var minVal = Math.min.apply(null, allValues.filter(function(v) { return isFinite(v); })) || 0;
+        if (minVal === maxVal) { minVal = 0; maxVal = maxVal * 1.1 || 1; }
+        var range = maxVal - minVal;
+
+        ctx.clearRect(0, 0, w, h);
+
+        ctx.strokeStyle = 'rgba(42,74,107,0.3)';
+        ctx.lineWidth = 0.5;
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillStyle = '#5a7a96';
+        ctx.textAlign = 'right';
+        for (var i = 0; i <= 4; i++) {
+            var y = padding.top + (chartH * i / 4);
+            var val = maxVal - (range * i / 4);
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(w - padding.right, y);
+            ctx.stroke();
+            ctx.fillText(formatNumber(val), padding.left - 5, y + 3);
+        }
+
+        var xStep = chartW / Math.max(labels.length - 1, 1);
+        var labelStep = Math.ceil(labels.length / 12);
+        ctx.textAlign = 'center';
+        for (var i = 0; i < labels.length; i++) {
+            if (i % labelStep === 0) {
+                var x = padding.left + i * xStep;
+                ctx.fillText(labels[i], x, h - 8);
+            }
+        }
+
+        datasets.forEach(function(ds, dIdx) {
+            ctx.beginPath();
+            ctx.strokeStyle = ds.borderColor || CHART_COLORS[dIdx % CHART_COLORS.length];
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            if (ds.fill) {
+                ctx.fillStyle = ds.backgroundColor || (ds.borderColor || CHART_COLORS[dIdx % CHART_COLORS.length]) + '20';
+            }
+
+            var firstValid = true;
+            for (var i = 0; i < ds.data.length; i++) {
+                var val = ds.data[i];
+                if (!isFinite(val)) continue;
+                var x = padding.left + i * xStep;
+                var y = padding.top + chartH - ((val - minVal) / range) * chartH;
+                if (ds.fill && firstValid) {
+                    ctx.moveTo(x, padding.top + chartH);
+                    ctx.lineTo(x, y);
+                    firstValid = false;
+                } else if (firstValid) {
+                    ctx.moveTo(x, y);
+                    firstValid = false;
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            if (ds.fill) {
+                ctx.lineTo(padding.left + (ds.data.length - 1) * xStep, padding.top + chartH);
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.strokeStyle = ctx.strokeStyle;
+            ctx.lineWidth = 2;
+            firstValid = true;
+            for (var i = 0; i < ds.data.length; i++) {
+                var val = ds.data[i];
+                if (!isFinite(val)) continue;
+                var x = padding.left + i * xStep;
+                var y = padding.top + chartH - ((val - minVal) / range) * chartH;
+                if (firstValid) { ctx.moveTo(x, y); firstValid = false; }
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        });
+
+        return { canvas: canvas, ctx: ctx, w: w, h: h };
+    }
+
+    function drawBarChart(canvasId, labels, datasets, options) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.clientWidth;
+        var h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        var padding = { top: 15, right: 15, bottom: 40, left: 50 };
+        var chartW = w - padding.left - padding.right;
+        var chartH = h - padding.top - padding.bottom;
+
+        var allValues = [];
+        datasets.forEach(function(ds) { allValues = allValues.concat(ds.data); });
+        var maxVal = Math.max.apply(null, allValues.filter(function(v) { return isFinite(v); })) || 1;
+        var minVal = 0;
+
+        ctx.clearRect(0, 0, w, h);
+
+        ctx.strokeStyle = 'rgba(42,74,107,0.3)';
+        ctx.lineWidth = 0.5;
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillStyle = '#5a7a96';
+        ctx.textAlign = 'right';
+        for (var i = 0; i <= 4; i++) {
+            var y = padding.top + (chartH * i / 4);
+            var val = maxVal - (maxVal * i / 4);
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(w - padding.right, y);
+            ctx.stroke();
+            ctx.fillText(formatNumber(val), padding.left - 5, y + 3);
+        }
+
+        var numBars = labels.length;
+        var barGroupWidth = chartW / numBars;
+        var barWidth = Math.min(barGroupWidth * 0.7, 40);
+        var barGap = (barGroupWidth - barWidth) / 2;
+
+        for (var i = 0; i < numBars; i++) {
+            var x = padding.left + i * barGroupWidth + barGap;
+            var totalHeight = 0;
+            for (var j = 0; j < datasets.length; j++) {
+                var val = datasets[j].data[i] || 0;
+                var barH = (val / maxVal) * chartH;
+                var y = padding.top + chartH - totalHeight - barH;
+                ctx.fillStyle = datasets[j].backgroundColor || CHART_COLORS[j % CHART_COLORS.length];
+                ctx.fillRect(x, y, barWidth - 2, barH);
+                totalHeight += barH;
+            }
+
+            var labelX = padding.left + i * barGroupWidth + barGroupWidth / 2;
+            ctx.save();
+            ctx.translate(labelX, h - 8);
+            ctx.rotate(-Math.PI / 6);
+            ctx.textAlign = 'right';
+            var labelText = labels[i].length > 8 ? labels[i].substring(0, 7) + '..' : labels[i];
+            ctx.fillText(labelText, 0, 0);
+            ctx.restore();
+        }
+
+        return { canvas: canvas, ctx: ctx };
+    }
+
+    function drawDoughnutChart(canvasId, labels, values, colors) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.clientWidth;
+        var h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        var cx = w / 2;
+        var cy = h / 2;
+        var r = Math.min(w, h) * 0.35;
+        var innerR = r * 0.55;
+
+        ctx.clearRect(0, 0, w, h);
+
+        var total = 0;
+        for (var i = 0; i < values.length; i++) { total += values[i] || 0; }
+
+        if (total === 0) {
+            ctx.fillStyle = '#5a7a96';
+            ctx.font = '13px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('暂无数据', cx, cy);
+            return;
+        }
+
+        var startAngle = -Math.PI / 2;
+        for (var i = 0; i < values.length; i++) {
+            var val = values[i] || 0;
+            var sliceAngle = (val / total) * 2 * Math.PI;
+            ctx.beginPath();
+            ctx.moveTo(cx + innerR * Math.cos(startAngle), cy + innerR * Math.sin(startAngle));
+            ctx.arc(cx, cy, r, startAngle, startAngle + sliceAngle);
+            ctx.lineTo(cx + innerR * Math.cos(startAngle + sliceAngle), cy + innerR * Math.sin(startAngle + sliceAngle));
+            ctx.arc(cx, cy, innerR, startAngle + sliceAngle, startAngle, true);
+            ctx.closePath();
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.fill();
+            startAngle += sliceAngle;
+        }
+
+        ctx.fillStyle = '#e8f0f8';
+        ctx.font = 'bold 16px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(formatNumber(total), cx, cy - 3);
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillStyle = '#5a7a96';
+        ctx.fillText('总计', cx, cy + 12);
+
+        var legendY = h - 15;
+        var legendX = w / 2 - (labels.length * 70) / 2;
+        for (var i = 0; i < Math.min(labels.length, 5); i++) {
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.beginPath();
+            ctx.arc(legendX + i * 70, legendY, 4, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#8ba4bc';
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
+            var lbl = labels[i].length > 8 ? labels[i].substring(0, 7) + '..' : labels[i];
+            ctx.fillText(lbl + ' ' + formatNumber(values[i]), legendX + i * 70 + 8, legendY + 3);
+        }
+    }
+
+    function drawHorizontalBarChart(canvasId, labels, values, colors) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.clientWidth;
+        var h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        var padding = { top: 10, right: 15, bottom: 10, left: 80 };
+        var chartW = w - padding.left - padding.right;
+        var chartH = h - padding.top - padding.bottom;
+
+        var maxVal = Math.max.apply(null, values.filter(function(v) { return isFinite(v); })) || 1;
+
+        ctx.clearRect(0, 0, w, h);
+
+        var barHeight = Math.min(chartH / labels.length - 6, 24);
+        var barGap = (chartH - labels.length * barHeight) / (labels.length + 1);
+
+        for (var i = 0; i < labels.length; i++) {
+            var y = padding.top + barGap + i * (barHeight + barGap);
+            var barW = (values[i] / maxVal) * chartW;
+
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.fillRect(padding.left, y, barW, barHeight);
+
+            ctx.fillStyle = '#8ba4bc';
+            ctx.font = '11px -apple-system, sans-serif';
+            ctx.textAlign = 'right';
+            var lbl = labels[i].length > 10 ? labels[i].substring(0, 9) + '..' : labels[i];
+            ctx.fillText(lbl, padding.left - 5, y + barHeight / 2 + 3);
+
+            ctx.fillStyle = '#e8f0f8';
+            ctx.textAlign = 'left';
+            ctx.fillText(formatNumber(values[i]), padding.left + barW + 5, y + barHeight / 2 + 3);
+        }
+    }
+
+    function updateOverview(metrics, prevMetrics) {
+        var totalReqs = getMetricValue(metrics, 'http_requests_total');
+        var activeConns = getMetricValue(metrics, 'http_active_connections');
+        var totalConns = getMetricValue(metrics, 'http_connections_total');
+        var bytesRead = getMetricValue(metrics, 'http_bytes_read_total');
+        var bytesWritten = getMetricValue(metrics, 'http_bytes_written_total');
+        var cacheHits = getMetricValue(metrics, 'cache_hits_total');
+        var cacheMisses = getMetricValue(metrics, 'cache_misses_total');
+        var cacheHitRate = (cacheHits + cacheMisses) > 0 ? (cacheHits / (cacheHits + cacheMisses) * 100) : 0;
+        var durationCount = getMetricValue(metrics, 'http_request_duration_seconds_count');
+        var durationSum = getMetricValue(metrics, 'http_request_duration_seconds_sum');
+        var avgDuration = durationCount > 0 ? (durationSum / durationCount * 1000) : 0;
+
+        var prevTotalReqs = prevMetrics ? getMetricValue(prevMetrics, 'http_requests_total') : null;
+
+        var memCacheHits = getMetricValue(metrics, 'memory_cache_hits_total');
+        var memCacheMisses = getMetricValue(metrics, 'memory_cache_misses_total');
+        var memCacheHitRate = (memCacheHits + memCacheMisses) > 0 ? (memCacheHits / (memCacheHits + memCacheMisses) * 100) : 0;
+        var redisCacheHits = getMetricValue(metrics, 'redis_cache_hits_total');
+        var redisCacheMisses = getMetricValue(metrics, 'redis_cache_misses_total');
+        var redisCacheHitRate = (redisCacheHits + redisCacheMisses) > 0 ? (redisCacheHits / (redisCacheHits + redisCacheMisses) * 100) : 0;
+
+        var cards = [
+            { label: 'http_requests_total (请求总数)', value: formatNumber(totalReqs), cls: '', valCls: 'blue', sub: prevTotalReqs !== null ? '上次: ' + formatNumber(prevTotalReqs) : '' },
+            { label: 'http_active_connections (活跃连接)', value: formatNumber(activeConns), cls: 'green', valCls: 'green', sub: '总连接: ' + formatNumber(totalConns) },
+            { label: '平均响应时间 (Avg Duration)', value: avgDuration.toFixed(2) + ' ms', cls: avgDuration > 100 ? 'red' : avgDuration > 50 ? 'yellow' : '', valCls: avgDuration > 100 ? 'red' : avgDuration > 50 ? 'yellow' : 'cyan', sub: '总请求: ' + formatNumber(durationCount) },
+            { label: '内存缓存命中率 (Memory Hit Rate)', value: memCacheHitRate.toFixed(1) + '%', cls: memCacheHitRate < 50 ? 'red' : memCacheHitRate < 80 ? 'yellow' : 'green', valCls: memCacheHitRate < 50 ? 'red' : memCacheHitRate < 80 ? 'yellow' : 'green', sub: '命中: ' + formatNumber(memCacheHits) + ' / 未命中: ' + formatNumber(memCacheMisses) },
+            { label: 'Redis缓存命中率 (Redis Hit Rate)', value: redisCacheHitRate.toFixed(1) + '%', cls: redisCacheHitRate < 50 ? 'red' : redisCacheHitRate < 80 ? 'yellow' : 'green', valCls: redisCacheHitRate < 50 ? 'red' : redisCacheHitRate < 80 ? 'yellow' : 'green', sub: '命中: ' + formatNumber(redisCacheHits) + ' / 未命中: ' + formatNumber(redisCacheMisses) },
+            { label: 'http_bytes_written_total (写入字节)', value: formatBytes(bytesWritten), cls: 'purple', valCls: 'purple', sub: '读取: ' + formatBytes(bytesRead) }
+        ];
+
+        var html = '';
+        for (var i = 0; i < cards.length; i++) {
+            var c = cards[i];
+            html += '<div class="overview-card ' + c.cls + '">' +
+                '<div class="card-label">' + c.label + '</div>' +
+                '<div class="card-value ' + c.valCls + '">' + c.value + '</div>' +
+                '<div class="card-sub">' + c.sub + '</div>' +
+                '</div>';
+        }
+        document.getElementById('overviewGrid').innerHTML = html;
+    }
+
+    function updateGauges(metrics) {
+        var memCacheHits = getMetricValue(metrics, 'memory_cache_hits_total');
+        var memCacheMisses = getMetricValue(metrics, 'memory_cache_misses_total');
+        var memCacheRate = (memCacheHits + memCacheMisses) > 0 ? (memCacheHits / (memCacheHits + memCacheMisses)) : 0;
+        var redisCacheHits = getMetricValue(metrics, 'redis_cache_hits_total');
+        var redisCacheMisses = getMetricValue(metrics, 'redis_cache_misses_total');
+        var redisCacheRate = (redisCacheHits + redisCacheMisses) > 0 ? (redisCacheHits / (redisCacheHits + redisCacheMisses)) : 0;
+        var activeConns = getMetricValue(metrics, 'http_active_connections');
+        var totalConns = getMetricValue(metrics, 'http_connections_total');
+        var connRate = totalConns > 0 ? (activeConns / totalConns) : 0;
+        var durationCount = getMetricValue(metrics, 'http_request_duration_seconds_count');
+        var durationSum = getMetricValue(metrics, 'http_request_duration_seconds_sum');
+        var avgDuration = durationCount > 0 ? (durationSum / durationCount) : 0;
+        var durationRate = Math.min(avgDuration / 0.1, 1);
+
+        var gauges = [
+            { id: 'gaugeMemCache', value: memCacheRate, label: '内存缓存命中率', unit: 'Memory Cache', color: '#10b981' },
+            { id: 'gaugeRedisCache', value: redisCacheRate, label: 'Redis缓存命中率', unit: 'Redis Cache', color: '#3b82f6' },
+            { id: 'gaugeConn', value: connRate, label: '连接活跃率', unit: 'Connection', color: '#06b6d4' },
+            { id: 'gaugeDuration', value: durationRate, label: '响应延迟指数', unit: 'Latency (<100ms)', color: '#f59e0b' }
+        ];
+
+        var html = '';
+        for (var i = 0; i < gauges.length; i++) {
+            var g = gauges[i];
+            html += '<div class="gauge-card">' +
+                '<canvas id="' + g.id + '" class="gauge-canvas"></canvas>' +
+                '<div class="gauge-label">' + g.label + '</div>' +
+                '</div>';
+        }
+        document.getElementById('gaugesGrid').innerHTML = html;
+
+        for (var i = 0; i < gauges.length; i++) {
+            var g = gauges[i];
+            drawGauge(g.id, g.value, 1, g.label, g.unit, g.color);
+        }
+    }
+
+    function updateCharts(metrics) {
+        var now = new Date();
+        var timeLabel = formatTime(now);
+
+        var totalReqs = getMetricValue(metrics, 'http_requests_total');
+        var activeConns = getMetricValue(metrics, 'http_active_connections');
+        var totalConns = getMetricValue(metrics, 'http_connections_total');
+        var bytesRead = getMetricValue(metrics, 'http_bytes_read_total');
+        var bytesWritten = getMetricValue(metrics, 'http_bytes_written_total');
+        var cacheHits = getMetricValue(metrics, 'cache_hits_total');
+        var cacheMisses = getMetricValue(metrics, 'cache_misses_total');
+        var cacheSize = getMetricValue(metrics, 'cache_size_bytes');
+        var cacheItems = getMetricValue(metrics, 'cache_items');
+        var durationCount = getMetricValue(metrics, 'http_request_duration_seconds_count');
+        var durationSum = getMetricValue(metrics, 'http_request_duration_seconds_sum');
+
+        historyData.push({
+            time: timeLabel,
+            timestamp: now.getTime(),
+            totalReqs: totalReqs,
+            activeConns: activeConns,
+            totalConns: totalConns,
+            bytesRead: bytesRead,
+            bytesWritten: bytesWritten,
+            cacheHits: cacheHits,
+            cacheMisses: cacheMisses,
+            cacheSize: cacheSize,
+            cacheItems: cacheItems,
+            durationCount: durationCount,
+            durationSum: durationSum
+        });
+        if (historyData.length > MAX_HISTORY) historyData.shift();
+
+        var timeRangeSec = parseInt(document.getElementById('timeRange').value);
+        var filteredHistory = historyData;
+        if (timeRangeSec > 0) {
+            var cutoff = now.getTime() - timeRangeSec * 1000;
+            filteredHistory = historyData.filter(function(d) { return d.timestamp >= cutoff; });
+        }
+
+        var labels = filteredHistory.map(function(d) { return d.time; });
+
+        updateDurationChart(metrics);
+        updateMethodChart(metrics);
+        updateStatusChart(metrics);
+        updatePathChart(metrics);
+        updateIOChart(filteredHistory, labels);
+        updateConnectionChart(filteredHistory, labels);
+        updateCacheHitChart(metrics);
+    }
+
+    function updateDurationChart(metrics) {
+        var m = metrics['http_request_duration_seconds'];
+        if (!m || !m.samples.length) {
+            // 当没有数据时，显示空状态
+            var canvas = document.getElementById('durationChart');
+            if (canvas) {
+                var ctx = canvas.getContext('2d');
+                var dpr = window.devicePixelRatio || 1;
+                var w = canvas.clientWidth;
+                var h = canvas.clientHeight;
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, w, h);
+                ctx.fillStyle = '#5a7a96';
+                ctx.font = '13px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无数据', w / 2, h / 2);
+            }
+            return;
+        }
+
+        var buckets = [];
+        for (var i = 0; i < m.samples.length; i++) {
+            var s = m.samples[i];
+            if (s.labels.le && s.labels.le !== '+Inf' && isFinite(parseFloat(s.labels.le))) {
+                buckets.push({ le: parseFloat(s.labels.le), count: s.value });
+            }
+        }
+        
+        if (buckets.length === 0) {
+            // 当没有桶数据时，显示空状态
+            var canvas = document.getElementById('durationChart');
+            if (canvas) {
+                var ctx = canvas.getContext('2d');
+                var dpr = window.devicePixelRatio || 1;
+                var w = canvas.clientWidth;
+                var h = canvas.clientHeight;
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, w, h);
+                ctx.fillStyle = '#5a7a96';
+                ctx.font = '13px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('暂无数据', w / 2, h / 2);
+            }
+            return;
+        }
+
+        buckets.sort(function(a, b) { return a.le - b.le; });
+
+        var counts = [];
+        var bucketLabels = [];
+        var prevCount = 0;
+        for (var i = 0; i < buckets.length; i++) {
+            counts.push(buckets[i].count - prevCount);
+            prevCount = buckets[i].count;
+            var le = buckets[i].le;
+            bucketLabels.push(le < 0.001 ? (le * 1000).toFixed(0) + 'μs' : le < 1 ? (le * 1000).toFixed(1) + 'ms' : le + 's');
+        }
+
+        var datasets = [{ data: counts, backgroundColor: 'rgba(6,182,212,0.7)', borderColor: '#06b6d4' }];
+        drawBarChart('durationChart', bucketLabels, datasets);
+    }
+
+    function updateMethodChart(metrics) {
+        var m = metrics['http_requests_by_method'];
+        if (!m || !m.samples.length) return;
+
+        var labels = [];
+        var values = [];
+        for (var i = 0; i < m.samples.length; i++) {
+            labels.push(m.samples[i].labels.method || 'unknown');
+            values.push(m.samples[i].value);
+        }
+        drawDoughnutChart('methodChart', labels, values, CHART_COLORS);
+    }
+
+    function updateStatusChart(metrics) {
+        var m = metrics['http_responses_by_status'];
+        if (!m || !m.samples.length) return;
+
+        var labels = [];
+        var values = [];
+        var colorMap = { '200': '#10b981', '301': '#3b82f6', '302': '#3b82f6', '400': '#f59e0b', '401': '#f59e0b', '403': '#ef4444', '404': '#ef4444', '409': '#f59e0b', '500': '#ef4444' };
+        var colors = [];
+        for (var i = 0; i < m.samples.length; i++) {
+            var status = m.samples[i].labels.status || 'unknown';
+            labels.push(status);
+            values.push(m.samples[i].value);
+            colors.push(colorMap[status] || '#8b5cf6');
+        }
+        drawDoughnutChart('statusChart', labels, values, colors);
+    }
+
+    function updatePathChart(metrics) {
+        var m = metrics['http_requests_by_path'];
+        if (!m || !m.samples.length) return;
+
+        var entries = [];
+        for (var i = 0; i < m.samples.length; i++) {
+            entries.push({ path: m.samples[i].labels.path || '/', value: m.samples[i].value });
+        }
+        entries.sort(function(a, b) { return b.value - a.value; });
+        var top = entries.slice(0, 8);
+
+        drawHorizontalBarChart('pathChart', top.map(function(e) { return e.path; }), top.map(function(e) { return e.value; }), CHART_COLORS);
+    }
+
+    function updateIOChart(history, labels) {
+        var readDelta = [];
+        var writeDelta = [];
+        for (var i = 0; i < history.length; i++) {
+            if (i === 0) {
+                readDelta.push(history[i].bytesRead);
+                writeDelta.push(history[i].bytesWritten);
+            } else {
+                readDelta.push(Math.max(0, history[i].bytesRead - history[i - 1].bytesRead));
+                writeDelta.push(Math.max(0, history[i].bytesWritten - history[i - 1].bytesWritten));
+            }
+        }
+
+        drawLineChart('ioChart', labels, [
+            { label: '读取 (Read)', data: readDelta, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true },
+            { label: '写入 (Write)', data: writeDelta, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true }
+        ]);
+    }
+
+    function updateConnectionChart(history, labels) {
+        drawLineChart('connectionChart', labels, [
+            { label: 'http_active_connections (活跃连接)', data: history.map(function(d) { return d.activeConns; }), borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.1)', fill: true }
+        ]);
+    }
+
+    function updateCacheHitChart(metrics) {
+        var memCacheHits = getMetricValue(metrics, 'memory_cache_hits_total');
+        var memCacheMisses = getMetricValue(metrics, 'memory_cache_misses_total');
+        var memCacheUpdates = getMetricValue(metrics, 'memory_cache_updates_total');
+
+        var redisCacheHits = getMetricValue(metrics, 'redis_cache_hits_total');
+        var redisCacheMisses = getMetricValue(metrics, 'redis_cache_misses_total');
+        var redisCacheUpdates = getMetricValue(metrics, 'redis_cache_updates_total');
+        var redisCacheExpirations = getMetricValue(metrics, 'redis_cache_expirations_total');
+
+        drawDoughnutChart('memCacheChart',
+            ['命中 (Hits)', '未命中 (Misses)', '更新 (Updates)'],
+            [memCacheHits, memCacheMisses, memCacheUpdates],
+            ['#10b981', '#ef4444', '#f59e0b']);
+
+        drawDoughnutChart('redisCacheChart',
+            ['命中 (Hits)', '未命中 (Misses)', '更新 (Updates)', '过期 (Expirations)'],
+            [redisCacheHits, redisCacheMisses, redisCacheUpdates, redisCacheExpirations],
+            ['#10b981', '#ef4444', '#f59e0b', '#8b5cf6']);
+    }
+
+    function updateDBOverview(metrics) {
+        var mysqlSlaveCount = getMetricValue(metrics, 'mysql_slave_count');
+        var mysqlPoolIdle = getMetricValue(metrics, 'mysql_master_pool_idle');
+        var mysqlPoolActive = getMetricValue(metrics, 'mysql_master_pool_active');
+        var mysqlPoolSize = getMetricValue(metrics, 'mysql_master_pool_size');
+        var mysqlFailovers = getMetricValue(metrics, 'mysql_failovers_total');
+        var mysqlBackups = getMetricValue(metrics, 'mysql_backups_total');
+        var mysqlSemiSync = getMetricValue(metrics, 'mysql_semi_sync_enabled');
+        var redisSlaveCount = getMetricValue(metrics, 'redis_slave_count');
+        var redisSlaveFallbacks = getMetricValue(metrics, 'redis_slave_fallbacks_total');
+        var mysqlSlaveFallbacks = getMetricValue(metrics, 'mysql_slave_fallbacks_total');
+
+        var mysqlSlaveHealthyCount = 0;
+        var m = metrics['mysql_slave_healthy'];
+        if (m) {
+            for (var i = 0; i < m.samples.length; i++) {
+                if (m.samples[i].value === 1) mysqlSlaveHealthyCount++;
+            }
+        }
+
+        var redisSlaveHealthyCount = 0;
+        m = metrics['redis_slave_healthy'];
+        if (m) {
+            for (var i = 0; i < m.samples.length; i++) {
+                if (m.samples[i].value === 1) redisSlaveHealthyCount++;
+            }
+        }
+
+        var maxLag = 0;
+        m = metrics['mysql_slave_replication_lag_ms'];
+        if (m) {
+            for (var i = 0; i < m.samples.length; i++) {
+                if (m.samples[i].value > maxLag) maxLag = m.samples[i].value;
+            }
+        }
+
+        var poolUsage = mysqlPoolSize > 0 ? (mysqlPoolActive / mysqlPoolSize * 100) : 0;
+
+        var cards = [
+            { label: 'MySQL从库状态 (Slave Status)', value: mysqlSlaveCount > 0 ? (mysqlSlaveHealthyCount + '/' + mysqlSlaveCount + ' 健康') : '单机模式', cls: mysqlSlaveCount > 0 && mysqlSlaveHealthyCount < mysqlSlaveCount ? 'yellow' : 'green', valCls: mysqlSlaveCount > 0 && mysqlSlaveHealthyCount < mysqlSlaveCount ? 'yellow' : 'green', sub: '半同步: ' + (mysqlSemiSync ? '已启用' : '未启用') },
+            { label: 'MySQL主库连接池 (Master Pool)', value: mysqlPoolActive + '/' + mysqlPoolSize, cls: poolUsage > 80 ? 'red' : poolUsage > 60 ? 'yellow' : '', valCls: poolUsage > 80 ? 'red' : poolUsage > 60 ? 'yellow' : 'cyan', sub: '空闲: ' + mysqlPoolIdle + ' / 使用率: ' + poolUsage.toFixed(1) + '%' },
+            { label: 'MySQL复制延迟 (Replication Lag)', value: maxLag.toFixed(0) + ' ms', cls: maxLag > 5000 ? 'red' : maxLag > 1000 ? 'yellow' : 'green', valCls: maxLag > 5000 ? 'red' : maxLag > 1000 ? 'yellow' : 'green', sub: '最大延迟: ' + maxLag.toFixed(0) + 'ms' },
+            { label: 'MySQL故障转移 (Failovers)', value: formatNumber(mysqlFailovers), cls: mysqlFailovers > 0 ? 'yellow' : 'green', valCls: mysqlFailovers > 0 ? 'yellow' : 'green', sub: '备份次数: ' + formatNumber(mysqlBackups) },
+            { label: 'Redis从库状态 (Slave Status)', value: redisSlaveCount > 0 ? (redisSlaveHealthyCount + '/' + redisSlaveCount + ' 健康') : '单机模式', cls: redisSlaveCount > 0 && redisSlaveHealthyCount < redisSlaveCount ? 'yellow' : 'green', valCls: redisSlaveCount > 0 && redisSlaveHealthyCount < redisSlaveCount ? 'yellow' : 'green', sub: '降级次数: ' + formatNumber(redisSlaveFallbacks) },
+            { label: 'MySQL从库降级 (Slave Fallbacks)', value: formatNumber(mysqlSlaveFallbacks), cls: mysqlSlaveFallbacks > 0 ? 'yellow' : 'green', valCls: mysqlSlaveFallbacks > 0 ? 'yellow' : 'green', sub: '从库命中: ' + formatNumber(getMetricValue(metrics, 'mysql_slave_hits_total')) }
+        ];
+
+        var html = '';
+        for (var i = 0; i < cards.length; i++) {
+            var c = cards[i];
+            html += '<div class="overview-card ' + c.cls + '">' +
+                '<div class="card-label">' + c.label + '</div>' +
+                '<div class="card-value ' + c.valCls + '">' + c.value + '</div>' +
+                '<div class="card-sub">' + c.sub + '</div>' +
+                '</div>';
+        }
+        document.getElementById('dbOverviewGrid').innerHTML = html;
+    }
+
+    function updateDBCharts(metrics) {
+        var mysqlPoolIdle = getMetricValue(metrics, 'mysql_master_pool_idle');
+        var mysqlPoolActive = getMetricValue(metrics, 'mysql_master_pool_active');
+        drawDoughnutChart('mysqlPoolChart',
+            ['空闲 (Idle)', '活跃 (Active)'],
+            [mysqlPoolIdle, mysqlPoolActive],
+            ['#10b981', '#3b82f6']);
+
+        var m = metrics['mysql_slave_replication_lag_ms'];
+        var lagLabels = [];
+        var lagValues = [];
+        if (m) {
+            for (var i = 0; i < m.samples.length; i++) {
+                lagLabels.push('Slave-' + (m.samples[i].labels.slave || i));
+                lagValues.push(m.samples[i].value);
+            }
+        }
+        if (lagLabels.length > 0) {
+            drawHorizontalBarChart('mysqlLagChart', lagLabels, lagValues, ['#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']);
+        } else {
+            var canvas = document.getElementById('mysqlLagChart');
+            if (canvas) {
+                var ctx = canvas.getContext('2d');
+                var dpr = window.devicePixelRatio || 1;
+                canvas.width = canvas.clientWidth * dpr;
+                canvas.height = canvas.clientHeight * dpr;
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+                ctx.fillStyle = '#5a7a96';
+                ctx.font = '13px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('无从库配置', canvas.clientWidth / 2, canvas.clientHeight / 2);
+            }
+        }
+
+        var mysqlSlaveHits = getMetricValue(metrics, 'mysql_slave_hits_total');
+        var mysqlSlaveMisses = getMetricValue(metrics, 'mysql_slave_misses_total');
+        var mysqlSlaveFallbacks = getMetricValue(metrics, 'mysql_slave_fallbacks_total');
+        drawDoughnutChart('mysqlSplitChart',
+            ['从库命中', '从库未命中', '降级主库'],
+            [mysqlSlaveHits, mysqlSlaveMisses, mysqlSlaveFallbacks],
+            ['#10b981', '#f59e0b', '#ef4444']);
+
+        var redisSlaveHits = getMetricValue(metrics, 'redis_slave_hits_total');
+        var redisSlaveMisses = getMetricValue(metrics, 'redis_slave_misses_total');
+        var redisSlaveFallbacks = getMetricValue(metrics, 'redis_slave_fallbacks_total');
+        drawDoughnutChart('redisReplicationChart',
+            ['从库命中', '从库未命中', '降级主库'],
+            [redisSlaveHits, redisSlaveMisses, redisSlaveFallbacks],
+            ['#10b981', '#f59e0b', '#ef4444']);
+    }
+
+    function updateMetricsTable(metrics, prevMetrics) {
+        var tbody = document.getElementById('metricsTableBody');
+        var html = '';
+        var metricNames = Object.keys(metrics).sort();
+
+        for (var i = 0; i < metricNames.length; i++) {
+            var name = metricNames[i];
+            var m = metrics[name];
+            if (name.endsWith('_bucket') || name.endsWith('_sum') || name.endsWith('_count')) continue;
+            if (m.type === 'unknown') continue;
+
+            var typeClass = 'type-' + m.type;
+            var cnName = METRICS_CN[name] || m.help || '';
+
+            for (var j = 0; j < m.samples.length; j++) {
+                var s = m.samples[j];
+                var labelStr = '';
+                var labelKeys = Object.keys(s.labels);
+                if (labelKeys.length > 0) {
+                    var parts = [];
+                    for (var k = 0; k < labelKeys.length; k++) {
+                        parts.push(labelKeys[k] + '="' + s.labels[labelKeys[k]] + '"');
+                    }
+                    labelStr = parts.join(', ');
+                }
+
+                var prevVal = prevMetrics ? getMetricValue(prevMetrics, name, s.labels) : null;
+                var trendHTML = prevMetrics ? getTrendHTML(s.value, prevVal) : '';
+
+                var displayValue = s.value;
+                if (name.includes('bytes')) displayValue = formatBytes(s.value);
+                else if (name.includes('duration')) displayValue = s.value.toFixed(6) + 's';
+                else displayValue = formatNumber(s.value);
+
+                html += '<tr data-filter="' + m.type + '">' +
+                    '<td><span class="metric-name">' + name + '</span> <span class="metric-cn">(' + cnName + ')</span></td>' +
+                    '<td><span class="metric-type ' + typeClass + '">' + m.type.toUpperCase() + '</span></td>' +
+                    '<td style="color:var(--text-muted);font-size:12px;">' + (labelStr || '-') + '</td>' +
+                    '<td class="metric-value">' + displayValue + '</td>' +
+                    '<td>' + trendHTML + '</td>' +
+                    '</tr>';
+            }
+        }
+        tbody.innerHTML = html;
+        applyFilter();
+    }
+
+    function applyFilter() {
+        var rows = document.querySelectorAll('#metricsTableBody tr');
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            if (currentFilter === 'all' || row.dataset.filter === currentFilter) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        }
+    }
+
+    function generateReport(metrics, prevMetrics) {
+        var totalReqs = getMetricValue(metrics, 'http_requests_total');
+        var activeConns = getMetricValue(metrics, 'http_active_connections');
+        var totalConns = getMetricValue(metrics, 'http_connections_total');
+        var durationCount = getMetricValue(metrics, 'http_request_duration_seconds_count');
+        var durationSum = getMetricValue(metrics, 'http_request_duration_seconds_sum');
+        var avgDuration = durationCount > 0 ? (durationSum / durationCount * 1000) : 0;
+        var bytesWritten = getMetricValue(metrics, 'http_bytes_written_total');
+        var bytesRead = getMetricValue(metrics, 'http_bytes_read_total');
+        var cacheSize = getMetricValue(metrics, 'cache_size_bytes');
+        var cacheItems = getMetricValue(metrics, 'cache_items');
+
+        var memCacheHits = getMetricValue(metrics, 'memory_cache_hits_total');
+        var memCacheMisses = getMetricValue(metrics, 'memory_cache_misses_total');
+        var memCacheHitRate = (memCacheHits + memCacheMisses) > 0 ? (memCacheHits / (memCacheHits + memCacheMisses) * 100) : 0;
+        var memCacheUpdates = getMetricValue(metrics, 'memory_cache_updates_total');
+
+        var redisCacheHits = getMetricValue(metrics, 'redis_cache_hits_total');
+        var redisCacheMisses = getMetricValue(metrics, 'redis_cache_misses_total');
+        var redisCacheHitRate = (redisCacheHits + redisCacheMisses) > 0 ? (redisCacheHits / (redisCacheHits + redisCacheMisses) * 100) : 0;
+        var redisCacheUpdates = getMetricValue(metrics, 'redis_cache_updates_total');
+        var redisCacheExpirations = getMetricValue(metrics, 'redis_cache_expirations_total');
+
+        var prevTotalReqs = prevMetrics ? getMetricValue(prevMetrics, 'http_requests_total') : null;
+        var qps = 'N/A';
+        if (prevTotalReqs !== null && historyData.length >= 2) {
+            var timeDiff = (historyData[historyData.length - 1].timestamp - historyData[historyData.length - 2].timestamp) / 1000;
+            if (timeDiff > 0) qps = ((totalReqs - prevTotalReqs) / timeDiff).toFixed(2);
+        }
+
+        var healthScore = 100;
+        var healthItems = [];
+
+        if (avgDuration < 10) healthItems.push({ cls: 'good', title: '✅ 响应延迟极低', desc: '平均响应时间 ' + avgDuration.toFixed(2) + 'ms，系统响应速度优秀。' });
+        else if (avgDuration < 50) healthItems.push({ cls: 'good', title: '✅ 响应延迟正常', desc: '平均响应时间 ' + avgDuration.toFixed(2) + 'ms，在正常范围内。' });
+        else if (avgDuration < 200) { healthScore -= 20; healthItems.push({ cls: 'warn', title: '⚠️ 响应延迟偏高', desc: '平均响应时间 ' + avgDuration.toFixed(2) + 'ms，建议优化处理逻辑。' }); }
+        else { healthScore -= 40; healthItems.push({ cls: 'bad', title: '❌ 响应延迟过高', desc: '平均响应时间 ' + avgDuration.toFixed(2) + 'ms，需立即排查！' }); }
+
+        if (memCacheHitRate >= 80) healthItems.push({ cls: 'good', title: '✅ 内存缓存命中率优秀', desc: 'GET请求内存缓存命中率 ' + memCacheHitRate.toFixed(1) + '%，命中 ' + formatNumber(memCacheHits) + ' 次，更新 ' + formatNumber(memCacheUpdates) + ' 次。' });
+        else if (memCacheHitRate >= 50) { healthScore -= 10; healthItems.push({ cls: 'warn', title: '⚠️ 内存缓存命中率一般', desc: 'GET请求内存缓存命中率 ' + memCacheHitRate.toFixed(1) + '%，建议优化缓存策略。' }); }
+        else if (memCacheHits + memCacheMisses > 0) { healthScore -= 25; healthItems.push({ cls: 'bad', title: '❌ 内存缓存命中率过低', desc: 'GET请求内存缓存命中率仅 ' + memCacheHitRate.toFixed(1) + '%。' }); }
+        else healthItems.push({ cls: 'warn', title: '⚠️ 内存缓存暂无数据', desc: '尚未产生GET请求缓存访问记录。' });
+
+        if (redisCacheHitRate >= 80) healthItems.push({ cls: 'good', title: '✅ Redis缓存命中率优秀', desc: 'POST请求Redis缓存命中率 ' + redisCacheHitRate.toFixed(1) + '%，命中 ' + formatNumber(redisCacheHits) + ' 次，更新 ' + formatNumber(redisCacheUpdates) + ' 次，过期 ' + formatNumber(redisCacheExpirations) + ' 次。' });
+        else if (redisCacheHitRate >= 50) { healthScore -= 10; healthItems.push({ cls: 'warn', title: '⚠️ Redis缓存命中率一般', desc: 'POST请求Redis缓存命中率 ' + redisCacheHitRate.toFixed(1) + '%。' }); }
+        else if (redisCacheHits + redisCacheMisses > 0) { healthScore -= 15; healthItems.push({ cls: 'warn', title: '⚠️ Redis缓存命中率较低', desc: 'POST请求Redis缓存命中率 ' + redisCacheHitRate.toFixed(1) + '%。' }); }
+        else healthItems.push({ cls: 'warn', title: '⚠️ Redis缓存暂无数据', desc: '尚未产生POST请求Redis访问记录。' });
+
+        if (activeConns <= totalConns * 0.5 && totalConns > 0) healthItems.push({ cls: 'good', title: '✅ 连接负载正常', desc: '活跃连接 ' + formatNumber(activeConns) + '，占比 ' + (totalConns > 0 ? (activeConns / totalConns * 100).toFixed(1) : 0) + '%。' });
+        else if (activeConns <= totalConns * 0.8 && totalConns > 0) { healthScore -= 10; healthItems.push({ cls: 'warn', title: '⚠️ 连接负载偏高', desc: '活跃连接占比 ' + (activeConns / totalConns * 100).toFixed(1) + '%。' }); }
+        else if (totalConns > 0) { healthScore -= 20; healthItems.push({ cls: 'bad', title: '❌ 连接负载过高', desc: '活跃连接占比 ' + (activeConns / totalConns * 100).toFixed(1) + '%。' }); }
+
+        healthItems.push({ cls: 'good', title: '📊 数据传输统计', desc: '总写入: ' + formatBytes(bytesWritten) + '，总读取: ' + formatBytes(bytesRead) + '。' });
+        healthItems.push({ cls: 'good', title: '💾 缓存使用情况', desc: '缓存项数: ' + formatNumber(cacheItems) + '，缓存大小: ' + formatBytes(cacheSize) + '。' });
+
+        // MySQL/Redis 主从健康评估
+        var mysqlSlaveCount = getMetricValue(metrics, 'mysql_slave_count');
+        var mysqlFailovers = getMetricValue(metrics, 'mysql_failovers_total');
+        var mysqlSlaveFallbacks = getMetricValue(metrics, 'mysql_slave_fallbacks_total');
+        var mysqlSemiSync = getMetricValue(metrics, 'mysql_semi_sync_enabled');
+        var mysqlPoolActive = getMetricValue(metrics, 'mysql_master_pool_active');
+        var mysqlPoolSize = getMetricValue(metrics, 'mysql_master_pool_size');
+        var redisSlaveCount = getMetricValue(metrics, 'redis_slave_count');
+        var redisSlaveFallbacks = getMetricValue(metrics, 'redis_slave_fallbacks_total');
+
+        var mysqlSlaveHealthyCount = 0;
+        var m = metrics['mysql_slave_healthy'];
+        if (m) { for (var i = 0; i < m.samples.length; i++) { if (m.samples[i].value === 1) mysqlSlaveHealthyCount++; } }
+        var redisSlaveHealthyCount = 0;
+        m = metrics['redis_slave_healthy'];
+        if (m) { for (var i = 0; i < m.samples.length; i++) { if (m.samples[i].value === 1) redisSlaveHealthyCount++; } }
+
+        var maxLag = 0;
+        m = metrics['mysql_slave_replication_lag_ms'];
+        if (m) { for (var i = 0; i < m.samples.length; i++) { if (m.samples[i].value > maxLag) maxLag = m.samples[i].value; } }
+
+        if (mysqlSlaveCount > 0) {
+            if (mysqlSlaveHealthyCount === mysqlSlaveCount && maxLag < 1000) {
+                healthItems.push({ cls: 'good', title: '✅ MySQL主从复制正常', desc: mysqlSlaveHealthyCount + '/' + mysqlSlaveCount + ' 从库健康，最大延迟 ' + maxLag.toFixed(0) + 'ms，半同步: ' + (mysqlSemiSync ? '已启用' : '未启用') + '。' });
+            } else if (mysqlSlaveHealthyCount > 0) {
+                healthScore -= 10;
+                healthItems.push({ cls: 'warn', title: '⚠️ MySQL部分从库异常', desc: mysqlSlaveHealthyCount + '/' + mysqlSlaveCount + ' 从库健康，最大延迟 ' + maxLag.toFixed(0) + 'ms。' });
+            } else {
+                healthScore -= 25;
+                healthItems.push({ cls: 'bad', title: '❌ MySQL所有从库不可用', desc: '所有读请求降级到主库，降级次数: ' + formatNumber(mysqlSlaveFallbacks) + '。' });
+            }
+            if (mysqlFailovers > 0) {
+                healthScore -= 5;
+                healthItems.push({ cls: 'warn', title: '⚠️ MySQL发生故障转移', desc: '累计故障转移 ' + mysqlFailovers + ' 次。' });
+            }
+        } else {
+            healthItems.push({ cls: 'warn', title: 'ℹ️ MySQL单机模式', desc: '未配置从库，读写均走主库。' });
+        }
+
+        if (redisSlaveCount > 0) {
+            if (redisSlaveHealthyCount === redisSlaveCount) {
+                healthItems.push({ cls: 'good', title: '✅ Redis主从复制正常', desc: redisSlaveHealthyCount + '/' + redisSlaveCount + ' 从库健康。' });
+            } else if (redisSlaveHealthyCount > 0) {
+                healthScore -= 5;
+                healthItems.push({ cls: 'warn', title: '⚠️ Redis部分从库异常', desc: redisSlaveHealthyCount + '/' + redisSlaveCount + ' 从库健康，降级次数: ' + formatNumber(redisSlaveFallbacks) + '。' });
+            } else {
+                healthScore -= 15;
+                healthItems.push({ cls: 'bad', title: '❌ Redis所有从库不可用', desc: '所有读请求降级到主库。' });
+            }
+        }
+
+        if (mysqlPoolSize > 0) {
+            var poolUsage = mysqlPoolActive / mysqlPoolSize * 100;
+            if (poolUsage > 80) { healthScore -= 10; healthItems.push({ cls: 'warn', title: '⚠️ MySQL连接池使用率高', desc: '活跃连接 ' + mysqlPoolActive + '/' + mysqlPoolSize + '，使用率 ' + poolUsage.toFixed(1) + '%。' }); }
+            else healthItems.push({ cls: 'good', title: '✅ MySQL连接池正常', desc: '活跃连接 ' + mysqlPoolActive + '/' + mysqlPoolSize + '，使用率 ' + poolUsage.toFixed(1) + '%。' });
+        }
+
+        if (qps !== 'N/A') {
+            var qpsVal = parseFloat(qps);
+            if (qpsVal > 1000) healthItems.push({ cls: 'good', title: '🚀 QPS表现优异', desc: '当前QPS: ' + qps + '，服务器吞吐量表现优秀。' });
+            else if (qpsVal > 100) healthItems.push({ cls: 'good', title: '📊 QPS表现正常', desc: '当前QPS: ' + qps + '。' });
+            else healthItems.push({ cls: 'warn', title: '📉 QPS较低', desc: '当前QPS: ' + qps + '。' });
+        }
+
+        healthScore = Math.max(0, Math.min(100, healthScore));
+        var scoreColor = healthScore >= 80 ? 'var(--accent-green)' : healthScore >= 60 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+        var scoreLabel = healthScore >= 80 ? '健康' : healthScore >= 60 ? '一般' : '异常';
+
+        var html = '<div class="report-item" style="border-left-color:' + scoreColor + ';grid-column:1/-1;">' +
+            '<div class="report-item-title" style="font-size:16px;">系统健康评分: <span style="color:' + scoreColor + ';font-size:24px;">' + healthScore + '</span> / 100 (' + scoreLabel + ')</div>' +
+            '<div class="report-item-desc">基于响应延迟、内存缓存命中率、Redis缓存命中率、连接负载等维度综合评估</div>' +
+            '</div>';
+
+        for (var i = 0; i < healthItems.length; i++) {
+            var item = healthItems[i];
+            html += '<div class="report-item ' + item.cls + '">' +
+                '<div class="report-item-title">' + item.title + '</div>' +
+                '<div class="report-item-desc">' + item.desc + '</div>' +
+                '</div>';
+        }
+
+        document.getElementById('reportGrid').innerHTML = html;
+    }
+
+    function fetchMetrics() {
+        var dot = document.getElementById('statusDot');
+        dot.className = 'status-dot loading';
+
+        fetch('/metrics')
+            .then(function(resp) {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.text();
+            })
+            .then(function(text) {
+                var metrics = parsePrometheus(text);
+                dot.className = 'status-dot';
+
+                updateOverview(metrics, previousMetrics);
+                updateGauges(metrics);
+                updateCharts(metrics);
+                updateCacheHitChart(metrics);
+                updateDBOverview(metrics);
+                updateDBCharts(metrics);
+                updateMetricsTable(metrics, previousMetrics);
+                generateReport(metrics, previousMetrics);
+
+                previousMetrics = metrics;
+                document.getElementById('lastUpdate').textContent = '最后更新: ' + formatTime(new Date());
+
+                var overlay = document.getElementById('loadingOverlay');
+                if (overlay) overlay.style.display = 'none';
+            })
+            .catch(function(err) {
+                dot.className = 'status-dot error';
+                showToast('数据获取失败: ' + err.message, 'error');
+                var overlay = document.getElementById('loadingOverlay');
+                if (overlay) {
+                    overlay.innerHTML = '<div style="color:var(--accent-red);font-size:16px;margin-bottom:8px;">⚠️ 监控数据加载失败</div>' +
+                        '<div style="color:var(--text-muted);font-size:13px;">' + err.message + '</div>' +
+                        '<button class="btn btn-primary" style="margin-top:16px;" onclick="location.reload()">重试</button>';
+                }
+            });
+    }
+
+    function setupAutoRefresh() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        var interval = parseInt(document.getElementById('refreshInterval').value);
+        if (interval > 0) refreshTimer = setInterval(fetchMetrics, interval);
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', fetchMetrics);
+    document.getElementById('refreshInterval').addEventListener('change', setupAutoRefresh);
+    document.getElementById('timeRange').addEventListener('change', function() {
+        if (previousMetrics) updateCharts(previousMetrics);
+    });
+
+    var filterTags = document.querySelectorAll('.filter-tag');
+    for (var i = 0; i < filterTags.length; i++) {
+        filterTags[i].addEventListener('click', function() {
+            for (var j = 0; j < filterTags.length; j++) filterTags[j].classList.remove('active');
+            this.classList.add('active');
+            currentFilter = this.dataset.filter;
+            applyFilter();
+        });
+    }
+
+    fetchMetrics();
+    setupAutoRefresh();
+})();
+</script>
+</body>
+</html>

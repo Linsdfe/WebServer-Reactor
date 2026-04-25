@@ -117,13 +117,14 @@ void Epoller::Wait(int timeoutMs, std::vector<Channel*>& active_channels) {
     int num_events = epoll_wait(m_epollFd, m_events.data(), 
                                 static_cast<int>(m_events.size()), timeoutMs);
     if (num_events > 0) {
-        active_channels.reserve(num_events); // 预分配空间，优化性能
+        active_channels.reserve(num_events);
         for (int i = 0; i < num_events; ++i) {
-            // 通过 fd 映射回 Channel
-            Channel* channel = fd_to_channel_[m_events[i].data.fd];
-            // 设置实际触发事件（revents_）
+            auto it = fd_to_channel_.find(m_events[i].data.fd);
+            if (it == fd_to_channel_.end()) {
+                continue;
+            }
+            Channel* channel = it->second;
             channel->SetRevents(m_events[i].events);
-            // 加入就绪列表
             active_channels.push_back(channel);
         }
     }

@@ -2,104 +2,258 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>自定义登录测试页面</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统登录 - WebServer-Reactor</title>
     <style>
-        /* 简单美化，方便截图和操作 */
-        .container { 
-            width: 400px;
-            margin: 100px auto;
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --white: #ffffff;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --radius: 8px;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #f0f4f8 0%, #e9ecef 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             padding: 20px;
-            border: 1px solid #eee;
-            border-radius: 8px;
+        }
+        .container {
+            background: var(--white);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-lg);
+            width: 100%;
+            max-width: 420px;
+            overflow: hidden;
+            animation: fadeIn 0.6s ease-out;
+        }
+        .form-header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            padding: 32px;
+            text-align: center;
+            color: var(--white);
+        }
+        .form-header h2 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .form-header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .form-body {
+            padding: 32px;
         }
         .form-item {
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
-        label {
-            display: inline-block;
-            width: 80px;
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--gray-700);
+            margin-bottom: 8px;
         }
-        input {
-            width: 250px;
-            height: 25px;
-            padding: 0 5px;
-        }
-        button {
+        .form-input {
             width: 100%;
-            height: 35px;
-            background: #409eff;
-            color: white;
+            padding: 12px 16px;
+            border: 1px solid var(--gray-300);
+            border-radius: var(--radius);
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 12px;
             border: none;
-            border-radius: 4px;
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.2s ease;
         }
-        #errorMsg {
-            color: red;
-            margin-top: 10px;
-            text-align: center;
+        .btn-primary {
+            background: var(--primary);
+            color: var(--white);
         }
-        #successMsg {
-            color: green;
-            margin-top: 10px;
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow);
+        }
+        .form-footer {
             text-align: center;
-            font-size: 18px;
+            margin-top: 20px;
+            font-size: 14px;
+            color: var(--gray-500);
+        }
+        .form-footer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+        .form-footer a:hover {
+            color: var(--primary-dark);
+            text-decoration: underline;
+        }
+        .form-footer span {
+            margin: 0 12px;
+            color: var(--gray-300);
+        }
+        .msg {
+            padding: 12px;
+            border-radius: var(--radius);
+            margin-top: 16px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .msg-error {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .msg-success {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+        .form-panel {
+            animation: slideIn 0.4s ease-out;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        @media (max-width: 480px) {
+            .form-header,
+            .form-body {
+                padding: 24px;
+            }
+            .form-header h2 {
+                font-size: 20px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <!-- 登录表单：核心测试元素 -->
-        <div id="loginForm">
-            <h2 style="text-align: center;">用户登录</h2>
-            <div class="form-item">
-                <label>用户名：</label>
-                <!-- 用户名输入框：id固定为username，用于XPath定位 -->
-                <input type="text" id="username" maxlength="20" placeholder="请输入用户名">
+        <div id="loginForm" class="form-panel">
+            <div class="form-header">
+                <h2>用户登录</h2>
+                <p>欢迎回来，请输入您的账号和密码</p>
             </div>
-            <div class="form-item">
-                <label>密  码：</label>
-                <!-- 密码输入框：id固定为password，用于XPath定位 -->
-                <input type="password" id="password" maxlength="20" placeholder="请输入密码">
+            <div class="form-body">
+                <div class="form-item">
+                    <label class="form-label" for="username">用户名</label>
+                    <!-- 用户名输入框：id固定为username，用于XPath定位 -->
+                    <input type="text" id="username" class="form-input" maxlength="20" placeholder="请输入用户名">
+                </div>
+                <div class="form-item">
+                    <label class="form-label" for="password">密码</label>
+                    <!-- 密码输入框：id固定为password，用于XPath定位 -->
+                    <input type="password" id="password" class="form-input" maxlength="20" placeholder="请输入密码">
+                </div>
+                <!-- 登录按钮：id固定为loginBtn，用于XPath定位 -->
+                <button id="loginBtn" class="btn btn-primary">登录</button>
+                <!-- 注册链接 -->
+                <div class="form-footer">
+                    <a href="#" id="registerLink">还没有账号？点击注册</a>
+                    <span>•</span>
+                    <a href="/dashboard.html">系统监控面板</a>
+                </div>
+                <!-- 错误提示信息：id固定为errorMsg，用于断言校验 -->
+                <div id="errorMsg" class="msg msg-error" style="display: none;"></div>
             </div>
-            <!-- 登录按钮：id固定为loginBtn，用于XPath定位 -->
-            <button id="loginBtn">登 录</button>
-            <!-- 注册链接 -->
-            <div style="text-align: center; margin-top: 10px;">
-                <a href="#" id="registerLink">还没有账号？点击注册</a>
-            </div>
-            <!-- 错误提示信息：id固定为errorMsg，用于断言校验 -->
-            <div id="errorMsg"></div>
         </div>
         
         <!-- 注册表单 -->
-        <div id="registerForm" style="display: none;">
-            <h2 style="text-align: center;">用户注册</h2>
-            <div class="form-item">
-                <label>用户名：</label>
-                <input type="text" id="regUsername" maxlength="20" placeholder="请输入用户名">
+        <div id="registerForm" class="form-panel" style="display: none;">
+            <div class="form-header">
+                <h2>用户注册</h2>
+                <p>创建新账号，开始使用系统</p>
             </div>
-            <div class="form-item">
-                <label>密  码：</label>
-                <input type="password" id="regPassword" maxlength="20" placeholder="请输入密码">
+            <div class="form-body">
+                <div class="form-item">
+                    <label class="form-label" for="regUsername">用户名</label>
+                    <input type="text" id="regUsername" class="form-input" maxlength="20" placeholder="请输入用户名">
+                </div>
+                <div class="form-item">
+                    <label class="form-label" for="regPassword">密码</label>
+                    <input type="password" id="regPassword" class="form-input" maxlength="20" placeholder="请输入密码">
+                </div>
+                <div class="form-item">
+                    <label class="form-label" for="regConfirmPassword">确认密码</label>
+                    <input type="password" id="regConfirmPassword" class="form-input" maxlength="20" placeholder="请确认密码">
+                </div>
+                <!-- 注册按钮 -->
+                <button id="registerBtn" class="btn btn-primary">注册</button>
+                <!-- 登录链接 -->
+                <div class="form-footer">
+                    <a href="#" id="loginLink">已有账号？点击登录</a>
+                </div>
+                <!-- 错误提示信息 -->
+                <div id="regErrorMsg" class="msg" style="display: none;"></div>
             </div>
-            <div class="form-item">
-                <label>确认密码：</label>
-                <input type="password" id="regConfirmPassword" maxlength="20" placeholder="请确认密码">
-            </div>
-            <!-- 注册按钮 -->
-            <button id="registerBtn">注 册</button>
-            <!-- 登录链接 -->
-            <div style="text-align: center; margin-top: 10px;">
-                <a href="#" id="loginLink">已有账号？点击登录</a>
-            </div>
-            <!-- 错误提示信息 -->
-            <div id="regErrorMsg"></div>
         </div>
         
         <!-- 登录成功提示：id固定为successMsg，用于断言校验 -->
-        <div id="successMsg" style="display: none;">
-            恭喜您，登录成功！<br>
-            欢迎进入系统
+        <div id="successMsg" class="form-panel" style="display: none;">
+            <div class="form-header">
+                <h2>登录成功</h2>
+                <p>欢迎进入系统</p>
+            </div>
+            <div class="form-body">
+                <div class="msg msg-success" style="margin-top: 0;">
+                    恭喜您，登录成功！<br>
+                    正在跳转至系统页面...
+                </div>
+            </div>
         </div>
     </div>
 
@@ -170,7 +324,8 @@
 
                 // 校验逻辑
                 if (!username || !password) {
-                    errorMsg.innerText = "用户名和密码不能为空！";
+                    errorMsg.textContent = "用户名和密码不能为空！";
+                    errorMsg.style.display = "block";
                     return;
                 }
 
@@ -194,12 +349,14 @@
                         window.location.href = '/welcome.html';
                     } else {
                         // 登录失败：显示错误提示
-                        errorMsg.innerText = data.message || '登录失败！';
+                        errorMsg.textContent = data.message || '登录失败！';
+                        errorMsg.style.display = "block";
                     }
                 })
                 .catch(error => {
                     console.error('登录错误:', error);
-                    errorMsg.innerText = '网络错误，请稍后重试！';
+                    errorMsg.textContent = '网络错误，请稍后重试！';
+                    errorMsg.style.display = "block";
                 });
             });
 
@@ -212,16 +369,21 @@
                 const confirmPassword = regConfirmPasswordInput.value.trim();
 
                 // 清空之前的错误提示
-                regErrorMsg.innerText = "";
+                regErrorMsg.textContent = "";
+                regErrorMsg.style.display = "none";
 
                 // 校验逻辑
                 if (!username || !password || !confirmPassword) {
-                    regErrorMsg.innerText = "用户名和密码不能为空！";
+                    regErrorMsg.textContent = "用户名和密码不能为空！";
+                    regErrorMsg.className = "msg msg-error";
+                    regErrorMsg.style.display = "block";
                     return;
                 }
                 
                 if (password !== confirmPassword) {
-                    regErrorMsg.innerText = "两次输入的密码不一致！";
+                    regErrorMsg.textContent = "两次输入的密码不一致！";
+                    regErrorMsg.className = "msg msg-error";
+                    regErrorMsg.style.display = "block";
                     return;
                 }
 
@@ -242,22 +404,27 @@
                     console.log('注册响应数据:', data);
                     if (data.success) {
                         // 注册成功：切换到登录表单
-                        regErrorMsg.innerText = "注册成功，请登录！";
-                        regErrorMsg.style.color = "green";
+                        regErrorMsg.textContent = "注册成功，请登录！";
+                        regErrorMsg.className = "msg msg-success";
+                        regErrorMsg.style.display = "block";
                         setTimeout(() => {
                             registerForm.style.display = "none";
                             loginForm.style.display = "block";
-                            regErrorMsg.innerText = "";
-                            regErrorMsg.style.color = "red";
+                            regErrorMsg.textContent = "";
+                            regErrorMsg.style.display = "none";
                         }, 2000);
                     } else {
                         // 注册失败：显示错误提示
-                        regErrorMsg.innerText = data.message || '注册失败！';
+                        regErrorMsg.textContent = data.message || '注册失败！';
+                        regErrorMsg.className = "msg msg-error";
+                        regErrorMsg.style.display = "block";
                     }
                 })
                 .catch(error => {
                     console.error('注册错误:', error);
-                    regErrorMsg.innerText = '网络错误，请稍后重试！';
+                    regErrorMsg.textContent = '网络错误，请稍后重试！';
+                    regErrorMsg.className = "msg msg-error";
+                    regErrorMsg.style.display = "block";
                 });
             });
         };

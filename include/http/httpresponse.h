@@ -82,7 +82,13 @@ public:
      * @brief 获取文件状态（stat结构体）
      * @return struct stat 文件状态信息
      */
-    struct stat FileStat() { return mmFileStat_; }
+    struct stat FileStat() const { return mmFileStat_; }
+
+    /**
+     * @brief 设置自定义Content-Type（覆盖自动检测）
+     * @param content_type MIME类型字符串
+     */
+    void SetContentType(const std::string& content_type) { content_type_override_ = content_type; }
 
     /**
      * @brief 判断是否开启长连接
@@ -117,6 +123,7 @@ private:
     std::string path_;          // 请求的文件路径（相对srcDir_）
     std::string srcDir_;        // 静态资源根目录
     std::string file_path_;     // 完整文件路径（用于零拷贝）
+    std::string content_type_override_; // 自定义Content-Type（覆盖自动检测）
     struct stat mmFileStat_;    // 文件状态（大小、类型、权限等）
 
     // 静态常量：MIME类型映射（文件后缀→Content-Type）

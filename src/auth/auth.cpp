@@ -6,6 +6,7 @@
  */
 
 #include "auth/auth.h"
+#include "monitor/metrics_collector.h"
 #include <random>
 #include <algorithm>
 #include <cctype>
@@ -55,19 +56,14 @@ Auth::~Auth() {
  * 安全说明：明文密码永不存储，仅存储哈希值
  */
 std::string Auth::HashPassword(const std::string& password) {
-    /*
     unsigned char hash[SHA256_DIGEST_LENGTH];
-    // 执行SHA256哈希计算
     SHA256(reinterpret_cast<const unsigned char*>(password.c_str()), password.length(), hash);
     
-    // 转为十六进制字符串
     std::stringstream ss;
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
     }
     return ss.str();
-    */
-    return password;
 }
 
 /**
@@ -79,11 +75,13 @@ std::string Auth::HashPassword(const std::string& password) {
 bool Auth::QueryUserFromDB(const std::string& username, std::string& password_hash) {
     // 先从Redis缓存查询
     if (RedisCache::GetInstance().Get("user:" + username, password_hash)) {
+        MetricsCollector::Instance().IncRedisCacheHits();  // Redis缓存命中
         return true;
     }
+    MetricsCollector::Instance().IncRedisCacheMisses();  // Redis缓存未命中
     
-    // 从连接池获取连接
-    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    // 从连接池获取从库连接（读操作）
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetSlaveConnection(3000);
     if (!conn) {
         std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
         return false;
@@ -91,44 +89,70 @@ bool Auth::QueryUserFromDB(const std::string& username, std::string& password_ha
 
     MYSQL* mysql = conn->GetRawConnection();
     if (!mysql) {
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
         return false;
     }
 
-    // 拼接查询SQL
-    std::string query = "SELECT password FROM users WHERE username = '" + username + "'";
-    
-    // 执行查询
-    if (mysql_query(mysql, query.c_str())) {
-        std::cerr << "[ERROR] MySQL查询失败：" << mysql_error(mysql) << std::endl;
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+    MYSQL_STMT* stmt = mysql_stmt_init(mysql);
+    if (!stmt) {
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
         return false;
     }
-    
-    // 获取结果集
-    MYSQL_RES* result = mysql_store_result(mysql);
-    if (!result) {
-        std::cerr << "[ERROR] 获取查询结果失败：" << mysql_error(mysql) << std::endl;
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+
+    const char* query = "SELECT password FROM users WHERE username = ?";
+    if (mysql_stmt_prepare(stmt, query, static_cast<unsigned long>(strlen(query)))) {
+        std::cerr << "[ERROR] mysql_stmt_prepare failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
         return false;
     }
-    
-    // 检查是否存在记录
+
+    MYSQL_BIND param[1];
+    memset(param, 0, sizeof(param));
+    param[0].buffer_type = MYSQL_TYPE_STRING;
+    param[0].buffer = const_cast<char*>(username.c_str());
+    param[0].buffer_length = static_cast<unsigned long>(username.length());
+
+    if (mysql_stmt_bind_param(stmt, param)) {
+        std::cerr << "[ERROR] mysql_stmt_bind_param failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
+        return false;
+    }
+
+    if (mysql_stmt_execute(stmt)) {
+        std::cerr << "[ERROR] mysql_stmt_execute failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
+        return false;
+    }
+
+    char password_buf[256] = {0};
+    unsigned long password_len = 0;
+    MYSQL_BIND result[1];
+    memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_STRING;
+    result[0].buffer = password_buf;
+    result[0].buffer_length = sizeof(password_buf);
+    result[0].length = &password_len;
+
+    if (mysql_stmt_bind_result(stmt, result)) {
+        std::cerr << "[ERROR] mysql_stmt_bind_result failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
+        return false;
+    }
+
     bool success = false;
-    if (mysql_num_rows(result) > 0) {
-        MYSQL_ROW row = mysql_fetch_row(result);
-        if (row && row[0]) {
-            password_hash = row[0];
-            success = true;
-            // 将查询结果缓存到Redis
-            RedisCache::GetInstance().Set("user:" + username, password_hash, 3600);
-        }
+    if (mysql_stmt_fetch(stmt) == 0) {
+        password_hash = std::string(password_buf, password_len);
+        success = true;
+        RedisCache::GetInstance().Set("user:" + username, password_hash, 3600);
+        MetricsCollector::Instance().IncRedisCacheUpdates();
     }
-    
-    // 释放结果集内存
-    mysql_free_result(result);
-    // 归还连接
-    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+
+    mysql_stmt_close(stmt);
+    MySQLConnectionPool::GetInstance().ReturnSlaveConnection(conn);
     
     return success;
 }
@@ -182,7 +206,8 @@ std::string Auth::GenerateSessionId(const std::string& username) {
     
     // 将会话信息缓存到Redis
     RedisCache::GetInstance().Set("session:" + session_id, username, SESSION_EXPIRY_SECONDS);
-    
+    MetricsCollector::Instance().IncRedisCacheUpdates();  // Redis缓存更新
+
     return session_id;
 }
 
@@ -201,10 +226,13 @@ bool Auth::ValidateSession(const std::string& session_id) {
     // 先从Redis缓存检查会话
     std::string username;
     if (RedisCache::GetInstance().Get("session:" + session_id, username)) {
+        MetricsCollector::Instance().IncRedisCacheHits();  // Redis缓存命中
         // 会话有效，更新过期时间
         RedisCache::GetInstance().Set("session:" + session_id, username, SESSION_EXPIRY_SECONDS);
+        MetricsCollector::Instance().IncRedisCacheUpdates();  // Redis缓存更新
         return true;
     }
+    MetricsCollector::Instance().IncRedisCacheMisses();  // Redis缓存未命中
     
     std::lock_guard<std::mutex> lock(session_mutex_);
     
@@ -221,6 +249,7 @@ bool Auth::ValidateSession(const std::string& session_id) {
             session_expiry_[session_id] = now + std::chrono::seconds(SESSION_EXPIRY_SECONDS);
             // 将会话信息缓存到Redis
             RedisCache::GetInstance().Set("session:" + session_id, it->second, SESSION_EXPIRY_SECONDS);
+            MetricsCollector::Instance().IncRedisCacheUpdates();  // Redis缓存更新
             return true;
         }
     }
@@ -238,20 +267,21 @@ bool Auth::ValidateSession(const std::string& session_id) {
 void Auth::CleanExpiredSessions() {
     auto now = std::chrono::steady_clock::now();
     std::vector<std::string> expired_sessions;
-    
+
     // 收集所有过期会话ID
     for (const auto& pair : session_expiry_) {
         if (pair.second <= now) {
             expired_sessions.push_back(pair.first);
         }
     }
-    
+
     // 删除过期会话
     for (const auto& session_id : expired_sessions) {
         sessions_.erase(session_id);
         session_expiry_.erase(session_id);
         // 从Redis中删除过期会话
         RedisCache::GetInstance().Delete("session:" + session_id);
+        MetricsCollector::Instance().IncRedisCacheExpirations();  // Redis缓存过期
     }
 }
 
@@ -265,8 +295,8 @@ void Auth::CleanExpiredSessions() {
  * created_at: 创建时间戳
  */
 void Auth::CreateUserTable() {
-    // 从连接池获取连接
-    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    // 从连接池获取主库连接（写操作）
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetMasterConnection(3000);
     if (!conn) {
         std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
         return;
@@ -274,7 +304,7 @@ void Auth::CreateUserTable() {
 
     MYSQL* mysql = conn->GetRawConnection();
     if (!mysql) {
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
         return;
     }
     
@@ -290,7 +320,7 @@ void Auth::CreateUserTable() {
     }
     
     // 归还连接
-    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+    MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
 }
 
 /**
@@ -300,8 +330,18 @@ void Auth::CreateUserTable() {
  * @return 添加成功返回true，用户已存在或失败返回false
  */
 bool Auth::AddUser(const std::string& username, const std::string& password) {
-    // 从连接池获取连接
-    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetConnection(3000);
+    // 先检查Redis缓存，快速判断用户是否已存在
+    std::string existing_password;
+    if (RedisCache::GetInstance().Get("user:" + username, existing_password)) {
+        // 用户已存在于缓存，直接返回失败
+        return false;
+    }
+    
+    // 密码哈希加密
+    std::string hashed_password = HashPassword(password);
+    
+    // 从连接池获取主库连接（写操作）
+    MySQLConnection* conn = MySQLConnectionPool::GetInstance().GetMasterConnection(3000);
     if (!conn) {
         std::cerr << "[ERROR] 获取数据库连接失败" << std::endl;
         return false;
@@ -309,33 +349,59 @@ bool Auth::AddUser(const std::string& username, const std::string& password) {
 
     MYSQL* mysql = conn->GetRawConnection();
     if (!mysql) {
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
         return false;
     }
     
-    // 密码哈希加密
-    std::string hashed_password = HashPassword(password);
-    
-    // INSERT IGNORE：用户已存在则不插入且不报错
-    std::string query = "INSERT IGNORE INTO users (username, password) VALUES ('" + username + "', '" + hashed_password + "')";
-    
-    if (mysql_query(mysql, query.c_str())) {
-        std::cerr << "[ERROR] 添加用户失败：" << mysql_error(mysql) << std::endl;
-        MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+    MYSQL_STMT* stmt = mysql_stmt_init(mysql);
+    if (!stmt) {
+        std::cerr << "[ERROR] mysql_stmt_init failed" << std::endl;
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
         return false;
     }
-    
-    // 受影响行数>0表示新插入成功
-    int affected_rows = mysql_affected_rows(mysql);
-    
-    // 归还连接
-    MySQLConnectionPool::GetInstance().ReturnConnection(conn);
+
+    const char* query = "INSERT IGNORE INTO users (username, password) VALUES (?, ?)";
+    if (mysql_stmt_prepare(stmt, query, static_cast<unsigned long>(strlen(query)))) {
+        std::cerr << "[ERROR] mysql_stmt_prepare failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
+        return false;
+    }
+
+    MYSQL_BIND params[2];
+    memset(params, 0, sizeof(params));
+    params[0].buffer_type = MYSQL_TYPE_STRING;
+    params[0].buffer = const_cast<char*>(username.c_str());
+    params[0].buffer_length = static_cast<unsigned long>(username.length());
+    params[1].buffer_type = MYSQL_TYPE_STRING;
+    params[1].buffer = const_cast<char*>(hashed_password.c_str());
+    params[1].buffer_length = static_cast<unsigned long>(hashed_password.length());
+
+    if (mysql_stmt_bind_param(stmt, params)) {
+        std::cerr << "[ERROR] mysql_stmt_bind_param failed: " << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
+        return false;
+    }
+
+    if (mysql_stmt_execute(stmt)) {
+        std::cerr << "[ERROR] 添加用户失败：" << mysql_stmt_error(stmt) << std::endl;
+        mysql_stmt_close(stmt);
+        MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
+        return false;
+    }
+
+    int affected_rows = static_cast<int>(mysql_stmt_affected_rows(stmt));
+
+    mysql_stmt_close(stmt);
+    MySQLConnectionPool::GetInstance().ReturnMasterConnection(conn);
     
     if (affected_rows > 0) {
-        // 将新用户信息缓存到Redis
+        RedisCache::GetInstance().Delete("user:" + username);
         RedisCache::GetInstance().Set("user:" + username, hashed_password, 3600);
+        MetricsCollector::Instance().IncRedisCacheUpdates();
     }
-    
+
     return affected_rows > 0;
 }
 

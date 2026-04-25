@@ -36,10 +36,6 @@ public:
      * @param fd 连接的socket fd
      * @param src_dir 静态资源目录
      * @param cache_manager 缓存管理器
-     * @param mysql_host MySQL主机地址
-     * @param mysql_user MySQL用户名
-     * @param mysql_password MySQL密码
-     * @param mysql_database MySQL数据库名
      */
     TcpConnection(EventLoop* loop, int fd, const std::string& src_dir, CacheManager* cache_manager);
 

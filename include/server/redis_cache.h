@@ -2,95 +2,82 @@
 
 /**
  * @file redis_cache.h
- * @brief Redis缓存管理器
+ * @brief Redis 缓存外观层（Facade 模式）
  *
- * 核心功能：
- * 1. 提供基于Redis的缓存操作
- * 2. 支持缓存设置、获取、删除
- * 3. 支持缓存过期时间设置
- * 4. 线程安全的缓存访问
+ * 设计模式：Facade（外观）
+ * - 对外提供简洁的缓存 API（Set/Get/Delete/Exists/FlushAll）
+ * - 内部委托给 RedisConnectionPool 处理连接管理
+ * - 对上层（Auth 等业务模块）屏蔽底层连接细节
+ *
+ * 读写分离策略：
+ * - 写操作（Set/Delete/FlushAll）→ 主库
+ * - 读操作（Get/Exists）→ 优先从库，不可用时降级主库
  */
 
 #include <string>
-#include <mutex>
+#include <vector>
+#include <functional>
 #include "auth/redis_connection_pool.h"
 
 namespace reactor {
 
 /**
  * @class RedisCache
- * @brief Redis缓存管理器
+ * @brief Redis 缓存外观层，单例模式
+ *
+ * 使用方式：
+ * @code
+ *   RedisCache::GetInstance().Initialize("localhost", 6379);
+ *   RedisCache::GetInstance().Set("key", "value", 3600);
+ *   std::string val;
+ *   bool hit = RedisCache::GetInstance().Get("key", val);
+ * @endcode
  */
 class RedisCache {
 public:
-    /**
-     * @brief 获取单例实例
-     */
     static RedisCache& GetInstance() {
         static RedisCache instance;
         return instance;
     }
 
-    /**
-     * @brief 构造函数
-     */
-    RedisCache();
+    void Initialize(const std::string& host, int port,
+                    const std::string& password = "", int db = 0,
+                    int pool_size = 10);
 
-    /**
-     * @brief 析构函数
-     */
-    ~RedisCache();
+    void InitializeWithSlaves(const RedisNodeConfig& master_config,
+                              const std::vector<RedisNodeConfig>& slave_configs = {});
 
-    /**
-     * @brief 初始化Redis缓存
-     * @param host Redis主机地址
-     * @param port Redis端口
-     * @param password Redis密码
-     * @param db Redis数据库编号
-     * @param pool_size 连接池大小
-     */
-    void Initialize(const std::string& host, int port, const std::string& password = "", int db = 0, int pool_size = 10);
-
-    /**
-     * @brief 设置缓存
-     * @param key 缓存键
-     * @param value 缓存值
-     * @param expire_seconds 过期时间（秒）
-     * @return bool 是否设置成功
-     */
     bool Set(const std::string& key, const std::string& value, int expire_seconds = 3600);
-
-    /**
-     * @brief 获取缓存
-     * @param key 缓存键
-     * @param value 输出参数：缓存值
-     * @return bool 是否获取成功
-     */
     bool Get(const std::string& key, std::string& value);
-
-    /**
-     * @brief 删除缓存
-     * @param key 缓存键
-     * @return bool 是否删除成功
-     */
     bool Delete(const std::string& key);
-
-    /**
-     * @brief 检查缓存是否存在
-     * @param key 缓存键
-     * @return bool 是否存在
-     */
     bool Exists(const std::string& key);
-
-    /**
-     * @brief 清空所有缓存
-     * @return bool 是否清空成功
-     */
     bool FlushAll();
 
+    bool HasSlaves() const;
+    int GetSlaveCount() const;
+    bool IsSlaveHealthy(int index) const;
+    bool CheckMasterHealth();
+    bool CheckSlaveHealth(int index);
+
+    using FailoverCallback = std::function<void(const std::string& old_master, const std::string& new_master)>;
+    void SetFailoverCallback(FailoverCallback callback);
+    bool PerformFailover();
+    bool EnsureMasterAvailable();
+    bool BackupDatabase(const std::string& backup_path);
+
+    using HealthAlertCallback = std::function<void(const std::string& node, bool is_healthy)>;
+    void SetHealthAlertCallback(HealthAlertCallback callback);
+    void StartHealthCheck(int interval_seconds = 10);
+    void StopHealthCheck();
+
+    int WaitForReplication(int num_slaves, int timeout_ms);
+
 private:
-    // 线程安全锁
-    std::mutex mutex_;
+    RedisCache();
+    ~RedisCache();
+
+    RedisCache(const RedisCache&) = delete;
+    RedisCache& operator=(const RedisCache&) = delete;
 };
 
 } // namespace reactor
