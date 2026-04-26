@@ -56,8 +56,8 @@ namespace reactor {
  * @brief Redis 连接封装构造函数
  * @param conn 已建立的 Redis 连接上下文
  */
-RedisConnection::RedisConnection(redisContext* conn)
-    : conn_(conn) {
+RedisConnection::RedisConnection(redisContext* conn, const std::string& host, int port)
+    : conn_(conn), host_(host), port_(port) {
 }
 
 /**
@@ -213,7 +213,7 @@ void RedisConnectionPool::InitializeWithSlaves(const RedisNodeConfig& master_con
     int healthy_slaves = 0;
     for (size_t i = 0; i < slave_configs.size(); ++i) {
         slave_pools_.emplace_back(std::make_unique<SlavePool>());
-        if (InitializeSlavePool(*slave_pools_[i], slave_configs[i])) {
+        if (InitializeSlavePool(*slave_pools_[i], slave_configs[i], master_config)) {
             healthy_slaves++;
             std::cout << "[Redis-Slave-" << i << "] Connected to "
                       << slave_configs[i].host << ":" << slave_configs[i].port << std::endl;
@@ -239,8 +239,12 @@ void RedisConnectionPool::InitializeWithSlaves(const RedisNodeConfig& master_con
 
 /**
  * @brief 初始化单个从库连接池
+ * @param pool 从库池引用
+ * @param config 从库配置
+ * @param master_config 主库配置（用于自动配置主从复制）
  */
-bool RedisConnectionPool::InitializeSlavePool(SlavePool& pool, const RedisNodeConfig& config) {
+bool RedisConnectionPool::InitializeSlavePool(SlavePool& pool, const RedisNodeConfig& config,
+                                               const RedisNodeConfig& master_config) {
     // ========== 保存配置 ==========
     pool.host = config.host;
     pool.port = config.port;
@@ -254,6 +258,51 @@ bool RedisConnectionPool::InitializeSlavePool(SlavePool& pool, const RedisNodeCo
     for (int i = 0; i < pool.pool_size; ++i) {
         RedisConnection* conn = CreateConnection(pool.host, pool.port, pool.password, pool.db);
         if (conn && CheckConnection(conn)) {
+            // ========== 检查是否需要自动配置主从复制 ==========
+            if (master_config.host.empty()) {
+                pool.connections.push(conn);
+                created++;
+                continue;
+            }
+
+            redisContext* ctx = conn->GetRawConnection();
+            redisReply* info_reply = (redisReply*)redisCommand(ctx, "INFO replication");
+            if (info_reply && info_reply->type == REDIS_REPLY_STRING) {
+                std::string info(info_reply->str, info_reply->len);
+                bool is_master = info.find("role:master") != std::string::npos;
+
+                if (is_master) {
+                    std::cout << "[Redis-Slave] Node " << config.host << ":" << config.port
+                              << " is master, configuring replication..." << std::endl;
+
+                    // 执行 SLAVEOF 配置主从复制
+                    std::string slaveof_cmd = "REPLICAOF " + master_config.host + " " + std::to_string(master_config.port);
+                    redisReply* slaveof_reply = (redisReply*)redisCommand(ctx, slaveof_cmd.c_str());
+
+                    if (slaveof_reply) {
+                        if (slaveof_reply->type == REDIS_REPLY_STATUS &&
+                            (strcmp(slaveof_reply->str, "OK") == 0 || strcmp(slaveof_reply->str, "BACKUP") == 0)) {
+                            std::cout << "[Redis-Slave] Replication configured: "
+                                      << config.host << ":" << config.port
+                                      << " -> " << master_config.host << ":" << master_config.port << std::endl;
+                        } else if (slaveof_reply->type == REDIS_REPLY_ERROR) {
+                            std::cerr << "[Redis-Slave] REPLICAOF failed: " << slaveof_reply->str << std::endl;
+                        }
+                        freeReplyObject(slaveof_reply);
+                    }
+
+                    // 如果有密码，需要在主从复制后再次认证
+                    if (!master_config.password.empty()) {
+                        redisReply* auth_reply = (redisReply*)redisCommand(ctx, "AUTH %s", master_config.password.c_str());
+                        if (auth_reply && auth_reply->type == REDIS_REPLY_ERROR) {
+                            std::cerr << "[Redis-Slave] Auth failed: " << auth_reply->str << std::endl;
+                        }
+                        if (auth_reply) freeReplyObject(auth_reply);
+                    }
+                }
+            }
+            if (info_reply) freeReplyObject(info_reply);
+
             pool.connections.push(conn);
             created++;
         } else if (conn) {
@@ -326,7 +375,7 @@ RedisConnection* RedisConnectionPool::CreateConnection(const std::string& host, 
         freeReplyObject(reply);
     }
 
-    return new RedisConnection(ctx);
+    return new RedisConnection(ctx, host, port);
 }
 
 // ==================== 获取连接 ====================
@@ -480,8 +529,7 @@ void RedisConnectionPool::ReturnConnection(RedisConnection* conn) {
 /**
  * @brief 归还从库连接
  *
- * 关键：通过连接上下文的 tcp_host/tcp_port 匹配正确的从库池
- * 这是修复后的正确实现
+ * 关键：通过连接的主机/端口信息匹配正确的从库池
  */
 void RedisConnectionPool::ReturnSlaveConnection(RedisConnection* conn) {
     if (!conn) {
@@ -500,11 +548,7 @@ void RedisConnectionPool::ReturnSlaveConnection(RedisConnection* conn) {
         SlavePool& pool = *slave_pools_[i];
         if (!pool.is_initialized.load()) continue;
 
-        // 从连接上下文获取实际连接的地址
-        std::string conn_server_info;
-        if (ctx->tcp_host && ctx->tcp_port) {
-            conn_server_info = std::string(ctx->tcp_host) + ":" + std::to_string(ctx->tcp_port);
-        }
+        std::string conn_server_info = conn->GetHost() + ":" + std::to_string(conn->GetPort());
 
         std::string pool_server_info = pool.host + ":" + std::to_string(pool.port);
         // 地址匹配则归还到对应池
@@ -1031,3 +1075,4 @@ void RedisConnectionPool::HealthCheckLoop(int interval_seconds) {
 }
 
 } // namespace reactor
+

@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <sstream>
 #include <vector>
+#include <cstring>
 
 namespace reactor {
 

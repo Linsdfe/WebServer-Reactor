@@ -30,15 +30,19 @@ namespace reactor {
 
 class RedisConnection {
 public:
-    explicit RedisConnection(redisContext* conn);
+    explicit RedisConnection(redisContext* conn, const std::string& host = "", int port = 0);
     ~RedisConnection();
 
     redisContext* GetRawConnection();
     bool IsValid();
     void Close();
+    std::string GetHost() const { return host_; }
+    int GetPort() const { return port_; }
 
 private:
     redisContext* conn_;
+    std::string host_;
+    int port_;
 };
 
 struct RedisNodeConfig {
@@ -191,7 +195,8 @@ private:
                       is_initialized(false), pool_size(10), db(0), replication_offset(0) {}
     };
 
-    bool InitializeSlavePool(SlavePool& pool, const RedisNodeConfig& config);
+    bool InitializeSlavePool(SlavePool& pool, const RedisNodeConfig& config,
+                            const RedisNodeConfig& master_config = RedisNodeConfig());
     RedisConnection* GetSlaveConnectionFromPool(SlavePool& pool, int timeout_ms);
     void ReturnSlaveConnectionToPool(RedisConnection* conn, SlavePool& pool);
 
@@ -228,3 +233,4 @@ private:
 };
 
 } // namespace reactor
+

@@ -67,6 +67,8 @@
 #include <sstream>
 #include <cstdlib>
 
+#include <cstring>
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -196,8 +198,8 @@ int CalculateOptimalPoolSize() {
  */
 MySQLConnectionPool::MySQLConnectionPool()
     : port_(3306), pool_size_(8), max_idle_time_(300),
-      is_initialized_(false), active_count_(0),
-      slave_round_robin_(0), master_healthy_(false),
+      slave_round_robin_(0), is_initialized_(false),
+      active_count_(0), master_healthy_(false),
       semi_sync_enabled_(false), semi_sync_timeout_ms_(0),
       failover_in_progress_(false),
       replication_lag_alert_threshold_ms_(5000),
@@ -380,8 +382,11 @@ bool MySQLConnectionPool::InitializeSlavePool(SlavePool& pool, const MySQLNodeCo
  * 步骤：
  * 1. mysql_init() 初始化 MySQL 对象
  * 2. 设置连接超时参数（30秒）
- * 3. mysql_real_connect() 建立连接
- * 4. 设置字符集为 utf8mb4（支持中文）
+ * 3. 先不带数据库连接，验证能连上
+ * 4. 检查数据库是否存在，不存在则自动创建
+ * 5. 创建 users 表（如果不存在）
+ * 6. 带数据库名建立连接
+ * 7. 设置字符集为 utf8mb4（支持中文）
  *
  * @param host     主机地址
  * @param port     端口
@@ -401,20 +406,47 @@ MySQLConnection* MySQLConnectionPool::CreateConnection(const std::string& host, 
     }
 
     // ========== 步骤2：设置连接超时 ==========
-    // 注意：mysql_options 需要传入 unsigned int* 类型，不能是字符串
     unsigned int connect_timeout = 30;
     mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout);
 
-    // ========== 步骤3：建立连接 ==========
+    // ========== 步骤3：先不带数据库连接，验证能连上 ==========
     if (!mysql_real_connect(conn, host.c_str(), user.c_str(),
-                           password.c_str(), database.c_str(),
+                           password.c_str(), nullptr,
                            port, nullptr, 0)) {
         std::cerr << "MySQL connection failed: " << mysql_error(conn) << std::endl;
         mysql_close(conn);
         return nullptr;
     }
 
-    // ========== 步骤4：设置字符集 ==========
+    // ========== 步骤4：检查数据库是否存在，不存在则自动创建 ==========
+    std::string db_query = "CREATE DATABASE IF NOT EXISTS `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+    if (mysql_query(conn, db_query.c_str())) {
+        std::cerr << "Create database failed: " << mysql_error(conn) << std::endl;
+        mysql_close(conn);
+        return nullptr;
+    }
+    std::cout << "[MySQL] Database '" << database << "' ensured on " << host << ":" << port << std::endl;
+
+    // ========== 步骤5：创建 users 表（如果不存在） ==========
+    std::string table_query = "CREATE TABLE IF NOT EXISTS `" + database + "`.`users` ("
+                             "`id` INT AUTO_INCREMENT PRIMARY KEY, "
+                             "`username` VARCHAR(50) NOT NULL UNIQUE, "
+                             "`password` VARCHAR(64) NOT NULL, "
+                             "`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                             ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    if (mysql_query(conn, table_query.c_str())) {
+        std::cerr << "Create users table failed: " << mysql_error(conn) << std::endl;
+        mysql_close(conn);
+        return nullptr;
+    }
+    std::cout << "[MySQL] Table 'users' ensured on " << host << ":" << port << std::endl;
+
+    // ========== 步骤6：带数据库名建立连接 ==========
+    if (!mysql_select_db(conn, database.c_str())) {
+        std::cout << "[MySQL] Connected to database '" << database << "' on " << host << ":" << port << std::endl;
+    }
+
+    // ========== 步骤7：设置字符集 ==========
     mysql_set_character_set(conn, "utf8mb4");
 
     return new MySQLConnection(conn, host, port);
@@ -1277,3 +1309,4 @@ void MySQLConnectionPool::HealthCheckLoop(int interval_seconds) {
 }
 
 } // namespace reactor
+

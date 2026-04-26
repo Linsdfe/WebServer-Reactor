@@ -4,6 +4,7 @@
  */
 
 #include "server/cachemanager.h"
+#include <mutex>
 
 namespace reactor {
 

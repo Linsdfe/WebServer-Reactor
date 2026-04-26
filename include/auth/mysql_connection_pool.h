@@ -24,6 +24,7 @@
 #include <memory>
 #include <functional>
 #include <chrono>
+#include <thread>
 
 namespace reactor {
 
@@ -70,7 +71,7 @@ struct SlavePool {
     std::string database;
     int pool_size;
     std::queue<MySQLConnection*> connections;
-    std::mutex mutex;
+    mutable std::mutex mutex;
     std::condition_variable cv;
     std::atomic<int> active_count;
     std::atomic<bool> is_initialized;
@@ -288,3 +289,4 @@ private:
 };
 
 } // namespace reactor
+
