@@ -53,8 +53,7 @@ Server::Server(int port, int thread_num,
       redis_slaves_(redis_slaves) {
     
     // ========== 定位静态资源目录（www） ==========
-    char path[256];
-    // 读取当前进程可执行文件的绝对路径（/proc/self/exe是符号链接）
+    char path[4096];
     ssize_t len = readlink("/proc/self/exe", path, sizeof(path)-1);
     if (len != -1) {
         path[len] = '\0';
@@ -100,27 +99,30 @@ void Server::Start() {
     std::cout << "==========================================" << std::endl;
     std::cout << "   Reactor WebServer v1.0" << std::endl;
     std::cout << "==========================================" << std::endl;
-    std::cout << "   CPU Logical Cores: " << cpu_cores << std::endl;
-    std::cout << "   IO Threads:        " << io_threads << std::endl;
-    std::cout << "   Listen Port:      " << port_ << std::endl;
-    std::cout << "   MySQL Host:       " << mysql_host_ << std::endl;
-    std::cout << "   MySQL User:       " << mysql_user_ << std::endl;
-    std::cout << "   MySQL Database:   " << mysql_database_ << std::endl;
-    std::cout << "   MySQL Pool Size:  " << mysql_pool_size << std::endl;
-    std::cout << "   Redis Host:       localhost" << std::endl;
-    std::cout << "   Redis Port:       6379" << std::endl;
-    std::cout << "   Redis Pool Size:  " << redis_pool_size << std::endl;
+    std::cout << "   CPU核心数:     " << cpu_cores << std::endl;
+    std::cout << "   IO线程数:      " << io_threads << std::endl;
+    std::cout << "   监听端口:      " << port_ << std::endl;
+    std::cout << "   MySQL主库:     " << mysql_host_ << ":" << 3306 << "/" << mysql_database_ << std::endl;
+    std::cout << "   MySQL连接池:   " << mysql_pool_size << std::endl;
+    if (!mysql_slaves_.empty()) {
+        std::cout << "   MySQL从库:     " << mysql_slaves_.size() << "个" << std::endl;
+        for (size_t i = 0; i < mysql_slaves_.size(); ++i) {
+            std::cout << "     从库-" << i << ": " << mysql_slaves_[i].host << ":" << mysql_slaves_[i].port << std::endl;
+        }
+    }
+    std::cout << "   Redis主库:     localhost:6379" << std::endl;
+    std::cout << "   Redis连接池:   " << redis_pool_size << std::endl;
     if (!redis_slaves_.empty()) {
-        std::cout << "   Redis Slaves:     " << redis_slaves_.size() << std::endl;
+        std::cout << "   Redis从库:     " << redis_slaves_.size() << "个" << std::endl;
         for (size_t i = 0; i < redis_slaves_.size(); ++i) {
-            std::cout << "     Slave-" << i << ": " << redis_slaves_[i].host << ":" << redis_slaves_[i].port << std::endl;
+            std::cout << "     从库-" << i << ": " << redis_slaves_[i].host << ":" << redis_slaves_[i].port << std::endl;
         }
     }
     std::cout << "==========================================" << std::endl;
     
-    std::cout << "[Info] Resource directory: " << src_dir_ << std::endl;
+    std::cout << "[信息] 资源目录: " << src_dir_ << std::endl;
     
-    std::cout << "[Info] Initializing MySQL connection pool..." << std::endl;
+    std::cout << "[信息] 正在初始化MySQL连接池..." << std::endl;
     if (mysql_slaves_.empty()) {
         MySQLConnectionPool::GetInstance().Initialize(
             mysql_host_, mysql_user_, mysql_password_, mysql_database_, 3306, mysql_pool_size
@@ -136,26 +138,26 @@ void Server::Start() {
         
         MySQLConnectionPool::GetInstance().InitializeWithSlaves(master_config, mysql_slaves_);
         MySQLConnectionPool::GetInstance().EnableSemiSync(3000);
-        std::cout << "[Info] MySQL master-slave replication enabled with " << mysql_slaves_.size() << " slaves" << std::endl;
+        std::cout << "[信息] MySQL主从复制已启用, " << mysql_slaves_.size() << "个从库" << std::endl;
     }
 
     MySQLConnectionPool::GetInstance().SetReplicationLagAlert(5000);
     MySQLConnectionPool::GetInstance().SetFailoverCallback(
         [](const std::string& old_master, const std::string& new_master) {
-            std::cerr << "[MySQL-FAILOVER] Master changed: " << old_master << " -> " << new_master << std::endl;
+            std::cerr << "[MySQL故障转移] 主库变更: " << old_master << " -> " << new_master << std::endl;
             MetricsCollector::Instance().IncMySQLFailovers();
         }
     );
     MySQLConnectionPool::GetInstance().SetHealthAlertCallback(
         [](const std::string& node, bool is_healthy) {
             if (!is_healthy) {
-                std::cerr << "[MySQL-ALERT] Node " << node << " is unhealthy!" << std::endl;
+                std::cerr << "[MySQL告警] 节点 " << node << " 不可用!" << std::endl;
             }
         }
     );
     MySQLConnectionPool::GetInstance().StartHealthCheck(10);
     
-    std::cout << "[Info] Initializing Redis connection pool..." << std::endl;
+    std::cout << "[信息] 正在初始化Redis连接池..." << std::endl;
     if (redis_slaves_.empty()) {
         RedisCache::GetInstance().Initialize("localhost", 6379, "", 0, redis_pool_size);
     } else {
@@ -165,21 +167,22 @@ void Server::Start() {
 
     RedisCache::GetInstance().SetFailoverCallback(
         [](const std::string& old_master, const std::string& new_master) {
-            std::cerr << "[Redis-FAILOVER] Master changed: " << old_master << " -> " << new_master << std::endl;
+            std::cerr << "[Redis故障转移] 主库变更: " << old_master << " -> " << new_master << std::endl;
         }
     );
     RedisCache::GetInstance().SetHealthAlertCallback(
         [](const std::string& node, bool is_healthy) {
             if (!is_healthy) {
-                std::cerr << "[Redis-ALERT] Node " << node << " is unhealthy!" << std::endl;
+                std::cerr << "[Redis告警] 节点 " << node << " 不可用!" << std::endl;
             }
         }
     );
     RedisCache::GetInstance().StartHealthCheck(10);
     
-    std::cout << "[Info] Cache manager initialized" << std::endl;
-    std::cout << "[Info] Metrics endpoint: http://localhost:" << port_ << "/metrics" << std::endl;
-    std::cout << "[Info] Server start success!" << std::endl;
+    std::cout << "[信息] 缓存管理器已初始化" << std::endl;
+    std::cout << "[信息] 监控端点: http://localhost:" << port_ << "/metrics" << std::endl;
+    std::cout << "[信息] 监控面板: http://localhost:" << port_ << "/dashboard.html" << std::endl;
+    std::cout << "[信息] 服务器启动成功!" << std::endl;
     // 启动IO线程池：创建thread_num个EventLoopThread并启动
     thread_pool_->Start();
     // 主Reactor线程中执行Acceptor::Listen（保证线程安全）

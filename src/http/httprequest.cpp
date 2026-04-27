@@ -110,10 +110,16 @@ bool HttpRequest::Parse(const std::string& buff) {
                 break;
 
             case BODY:
-                // 解析 POST 请求体
                 if (header_.count("content-length")) {
-                    size_t content_length = static_cast<size_t>(std::stoi(header_.at("content-length")));
-                    // 检查是否有足够的数据
+                    size_t content_length = 0;
+                    try {
+                        content_length = static_cast<size_t>(std::stoul(header_.at("content-length")));
+                    } catch (...) {
+                        return false;
+                    }
+                    if (content_length > 1048576) {
+                        return false;
+                    }
                     if (buffer.size() >= content_length) {
                         body_ = buffer.substr(0, content_length);
                         remaining_data_ = buffer.substr(content_length);
@@ -162,6 +168,12 @@ bool HttpRequest::ParseRequestLine(const std::string& line) {
  */
 void HttpRequest::ParsePath() {
     if (path_ == "/") {
+        path_ = "/index.html";
+    }
+    if (path_.find("..") != std::string::npos) {
+        path_ = "/index.html";
+    }
+    if (!path_.empty() && path_[0] != '/') {
         path_ = "/index.html";
     }
 }

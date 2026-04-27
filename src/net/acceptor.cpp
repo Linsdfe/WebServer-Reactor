@@ -106,7 +106,7 @@ void Acceptor::Listen() {
     loop_->AssertInLoopThread(); // 确保线程安全
     listening_ = true;
     accept_channel_.EnableReading(); // 开启读事件（EPOLLIN+EPOLLET）
-    std::cout << "[Info] Server listening on port " << port_ << std::endl;
+    std::cout << "[信息] 服务器正在监听端口 " << port_ << std::endl;
 }
 
 /**

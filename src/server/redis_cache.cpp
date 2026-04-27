@@ -108,7 +108,7 @@ bool RedisCache::Set(const std::string& key, const std::string& value, int expir
         // SETEX：设置值并指定过期时间
         redisReply* reply = (redisReply*)redisCommand(ctx, "SETEX %s %d %s",
                                                       key.c_str(), expire_seconds, value.c_str());
-        if (reply && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "OK") == 0) {
+        if (reply && reply->type == REDIS_REPLY_STATUS && reply->str && strcmp(reply->str, "OK") == 0) {
             result = true;
         }
         freeReplyObject(reply);
@@ -116,7 +116,7 @@ bool RedisCache::Set(const std::string& key, const std::string& value, int expir
         // SET：设置值，不过期
         redisReply* reply = (redisReply*)redisCommand(ctx, "SET %s %s",
                                                       key.c_str(), value.c_str());
-        if (reply && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "OK") == 0) {
+        if (reply && reply->type == REDIS_REPLY_STATUS && reply->str && strcmp(reply->str, "OK") == 0) {
             result = true;
         }
         freeReplyObject(reply);
@@ -285,7 +285,7 @@ bool RedisCache::FlushAll() {
 
     bool result = false;
     redisReply* reply = (redisReply*)redisCommand(ctx, "FLUSHALL");
-    if (reply && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "OK") == 0) {
+    if (reply && reply->type == REDIS_REPLY_STATUS && reply->str && strcmp(reply->str, "OK") == 0) {
         result = true;
     }
     freeReplyObject(reply);

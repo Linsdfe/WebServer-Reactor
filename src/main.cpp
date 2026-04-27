@@ -133,13 +133,13 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "========================================" << std::endl;
-    std::cout << "  WebServer-Reactor Starting..." << std::endl;
+    std::cout << "  WebServer-Reactor 启动中..." << std::endl;
     std::cout << "========================================" << std::endl;
-    std::cout << "  Port: " << port << std::endl;
-    std::cout << "  IO Threads: " << thread_num << std::endl;
-    std::cout << "  MySQL: " << mysql_host << "/" << mysql_database << std::endl;
-    std::cout << "  MySQL Slaves: " << mysql_slaves.size() << std::endl;
-    std::cout << "  Redis Slaves: " << redis_slaves.size() << std::endl;
+    std::cout << "  监听端口:     " << port << std::endl;
+    std::cout << "  IO线程数:     " << thread_num << std::endl;
+    std::cout << "  MySQL:        " << mysql_host << "/" << mysql_database << std::endl;
+    std::cout << "  MySQL从库:    " << (mysql_slaves.empty() ? "无(单机模式)" : std::to_string(mysql_slaves.size()) + "个") << std::endl;
+    std::cout << "  Redis从库:    " << (redis_slaves.empty() ? "无(单机模式)" : std::to_string(redis_slaves.size()) + "个") << std::endl;
     std::cout << "========================================" << std::endl;
 
     reactor::Server server(port, thread_num, mysql_host, mysql_user, mysql_password, mysql_database, mysql_slaves, redis_slaves);

@@ -179,8 +179,8 @@ void RedisConnectionPool::Initialize(const std::string& host, int port,
         }
     }
 
-    std::cout << "[Redis-Master] Created " << created << "/" << master_pool_size_
-              << " connections to " << host_ << ":" << port_ << std::endl;
+    std::cout << "[Redis] 主库连接池初始化完成: " << created << "/" << master_pool_size_
+              << " 连接 (" << host_ << ":" << port_ << ")" << std::endl;
 
     // ========== 步骤4：更新状态 ==========
     master_healthy_ = (created > 0);
@@ -205,7 +205,7 @@ void RedisConnectionPool::InitializeWithSlaves(const RedisNodeConfig& master_con
 
     // ========== 步骤2：检查从库 ==========
     if (slave_configs.empty()) {
-        std::cout << "[Redis] No slave nodes configured, using master-only mode" << std::endl;
+        std::cout << "[Redis] 无从库配置, 使用单机模式" << std::endl;
         return;
     }
 
@@ -215,16 +215,16 @@ void RedisConnectionPool::InitializeWithSlaves(const RedisNodeConfig& master_con
         slave_pools_.emplace_back(std::make_unique<SlavePool>());
         if (InitializeSlavePool(*slave_pools_[i], slave_configs[i], master_config)) {
             healthy_slaves++;
-            std::cout << "[Redis-Slave-" << i << "] Connected to "
+            std::cout << "[Redis] 从库-" << i << " 连接成功: "
                       << slave_configs[i].host << ":" << slave_configs[i].port << std::endl;
         } else {
-            std::cerr << "[Redis-Slave-" << i << "] Failed to connect to "
+            std::cerr << "[Redis] 从库-" << i << " 连接失败: "
                       << slave_configs[i].host << ":" << slave_configs[i].port << std::endl;
         }
     }
 
-    std::cout << "[Redis] Master-Slave replication: " << healthy_slaves
-              << "/" << slave_configs.size() << " slaves healthy" << std::endl;
+    std::cout << "[Redis] 主从复制状态: " << healthy_slaves
+              << "/" << slave_configs.size() << " 个从库健康" << std::endl;
 
     // ========== 步骤4：注册监控 ==========
     MetricsCollector::Instance().SetRedisSlaveCount(static_cast<int>(slave_configs.size()));
@@ -272,30 +272,28 @@ bool RedisConnectionPool::InitializeSlavePool(SlavePool& pool, const RedisNodeCo
                 bool is_master = info.find("role:master") != std::string::npos;
 
                 if (is_master) {
-                    std::cout << "[Redis-Slave] Node " << config.host << ":" << config.port
-                              << " is master, configuring replication..." << std::endl;
+                    std::cout << "[Redis] 从库节点 " << config.host << ":" << config.port
+                              << " 当前为主库, 正在配置复制..." << std::endl;
 
-                    // 执行 SLAVEOF 配置主从复制
                     std::string slaveof_cmd = "REPLICAOF " + master_config.host + " " + std::to_string(master_config.port);
                     redisReply* slaveof_reply = (redisReply*)redisCommand(ctx, slaveof_cmd.c_str());
 
                     if (slaveof_reply) {
                         if (slaveof_reply->type == REDIS_REPLY_STATUS &&
                             (strcmp(slaveof_reply->str, "OK") == 0 || strcmp(slaveof_reply->str, "BACKUP") == 0)) {
-                            std::cout << "[Redis-Slave] Replication configured: "
+                            std::cout << "[Redis] 复制配置成功: "
                                       << config.host << ":" << config.port
                                       << " -> " << master_config.host << ":" << master_config.port << std::endl;
                         } else if (slaveof_reply->type == REDIS_REPLY_ERROR) {
-                            std::cerr << "[Redis-Slave] REPLICAOF failed: " << slaveof_reply->str << std::endl;
+                            std::cerr << "[Redis] REPLICAOF 失败: " << slaveof_reply->str << std::endl;
                         }
                         freeReplyObject(slaveof_reply);
                     }
 
-                    // 如果有密码，需要在主从复制后再次认证
                     if (!master_config.password.empty()) {
                         redisReply* auth_reply = (redisReply*)redisCommand(ctx, "AUTH %s", master_config.password.c_str());
                         if (auth_reply && auth_reply->type == REDIS_REPLY_ERROR) {
-                            std::cerr << "[Redis-Slave] Auth failed: " << auth_reply->str << std::endl;
+                            std::cerr << "[Redis] 认证失败: " << auth_reply->str << std::endl;
                         }
                         if (auth_reply) freeReplyObject(auth_reply);
                     }
@@ -341,7 +339,7 @@ RedisConnection* RedisConnectionPool::CreateConnection(const std::string& host, 
         return nullptr;
     }
     if (ctx->err) {
-        std::cerr << "[Redis] Connection error to " << host << ":" << port
+        std::cerr << "[Redis] 连接错误 " << host << ":" << port
                   << " - " << ctx->errstr << std::endl;
         redisFree(ctx);
         return nullptr;
@@ -398,7 +396,7 @@ RedisConnection* RedisConnectionPool::GetConnection(int timeout_ms) {
     // ========== 步骤2：检查主库健康 ==========
     if (!master_healthy_.load(std::memory_order_relaxed)) {
         if (!EnsureMasterAvailable()) {
-            std::cerr << "[Redis] Master unavailable and failover failed" << std::endl;
+            std::cerr << "[Redis] 主库不可用且故障转移失败" << std::endl;
             return nullptr;
         }
     }
@@ -468,7 +466,7 @@ RedisConnection* RedisConnectionPool::GetSlaveConnection(int timeout_ms) {
     }
 
     // ========== 步骤4：降级到主库 ==========
-    std::cout << "[Redis] All slaves unavailable, falling back to master" << std::endl;
+    std::cout << "[Redis] 所有从库不可用, 回退到主库" << std::endl;
     MetricsCollector::Instance().IncRedisSlaveFallbacks();
     return GetConnection(timeout_ms);
 }
@@ -500,6 +498,9 @@ RedisConnection* RedisConnectionPool::GetSlaveConnectionFromPool(SlavePool& pool
     if (!conn->IsValid()) {
         delete conn;
         conn = CreateConnection(pool.host, pool.port, pool.password, pool.db);
+        if (!conn) {
+            return nullptr;
+        }
     }
 
     pool.active_count++;
@@ -642,14 +643,35 @@ bool RedisConnectionPool::IsSlaveHealthy(int index) const {
  * 使用 PING 命令检查
  */
 bool RedisConnectionPool::CheckMasterHealth() {
-    RedisConnection* conn = GetConnection(1000);
-    if (!conn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (connections_.empty()) {
+        RedisConnection* conn = CreateConnection(host_, port_, password_, db_);
+        if (conn) {
+            connections_.push(conn);
+            master_healthy_ = true;
+            return true;
+        }
         master_healthy_ = false;
         return false;
     }
 
+    RedisConnection* conn = connections_.front();
+    connections_.pop();
+
     bool healthy = CheckConnection(conn);
-    ReturnConnection(conn);
+
+    if (healthy) {
+        connections_.push(conn);
+    } else {
+        delete conn;
+        RedisConnection* new_conn = CreateConnection(host_, port_, password_, db_);
+        if (new_conn) {
+            connections_.push(new_conn);
+            healthy = true;
+        }
+    }
+
     master_healthy_ = healthy;
     return healthy;
 }
@@ -825,18 +847,16 @@ void RedisConnectionPool::SetFailoverCallback(FailoverCallback callback) {
 bool RedisConnectionPool::PerformFailover() {
     std::lock_guard<std::mutex> lock(failover_mutex_);
 
-    // ========== 步骤1：防止并发 ==========
     if (failover_in_progress_.exchange(true)) {
-        std::cerr << "[Redis] Failover already in progress" << std::endl;
+        std::cerr << "[Redis] 故障转移正在进行中" << std::endl;
         return false;
     }
 
-    std::cout << "[Redis] Starting failover process..." << std::endl;
+    std::cout << "[Redis] 开始故障转移..." << std::endl;
 
-    // ========== 步骤2：选择新主库（偏移量最大） ==========
     int new_master_idx = SelectNewMaster();
     if (new_master_idx < 0) {
-        std::cerr << "[Redis] No suitable slave found for failover" << std::endl;
+        std::cerr << "[Redis] 未找到合适的从库进行故障转移" << std::endl;
         failover_in_progress_ = false;
         return false;
     }
@@ -845,9 +865,36 @@ bool RedisConnectionPool::PerformFailover() {
     std::string old_master = host_ + ":" + std::to_string(port_);
     std::string new_master = new_master_pool.host + ":" + std::to_string(new_master_pool.port);
 
-    std::cout << "[Redis] Promoting slave-" << new_master_idx << " (" << new_master << ") to master" << std::endl;
+    std::cout << "[Redis] 提升从库-" << new_master_idx << " (" << new_master << ") 为主库" << std::endl;
 
-    // ========== 步骤3：销毁旧主库连接 ==========
+    // ========== 步骤3：在新主库上取消复制关系 ==========
+    {
+        struct timeval timeout = {2, 0};
+        redisContext* ctx = redisConnectWithTimeout(new_master_pool.host.c_str(),
+                                                    new_master_pool.port, timeout);
+        if (ctx && !ctx->err) {
+            if (!new_master_pool.password.empty()) {
+                redisReply* auth_reply = (redisReply*)redisCommand(ctx, "AUTH %s",
+                                                                    new_master_pool.password.c_str());
+                if (auth_reply) freeReplyObject(auth_reply);
+            }
+            redisReply* replicaof_reply = (redisReply*)redisCommand(ctx, "REPLICAOF NO ONE");
+            if (replicaof_reply) {
+                if (replicaof_reply->type == REDIS_REPLY_STATUS &&
+                    (strcmp(replicaof_reply->str, "OK") == 0 || strcmp(replicaof_reply->str, "BACKUP") == 0)) {
+                    std::cout << "[Redis] 新主库已取消复制关系" << std::endl;
+                } else if (replicaof_reply->type == REDIS_REPLY_ERROR) {
+                    std::cerr << "[Redis] REPLICAOF NO ONE 失败: " << replicaof_reply->str << std::endl;
+                }
+                freeReplyObject(replicaof_reply);
+            }
+        } else {
+            std::cerr << "[Redis] 连接新主库失败" << std::endl;
+        }
+        if (ctx) redisFree(ctx);
+    }
+
+    // ========== 步骤4：销毁旧主库连接 ==========
     {
         std::lock_guard<std::mutex> pool_lock(mutex_);
         while (!connections_.empty()) {
@@ -857,11 +904,11 @@ bool RedisConnectionPool::PerformFailover() {
         }
     }
 
-    // ========== 步骤4：更新主库地址 ==========
+    // ========== 步骤5：更新主库地址 ==========
     host_ = new_master_pool.host;
     port_ = new_master_pool.port;
 
-    // ========== 步骤5：创建新主库连接池 ==========
+    // ========== 步骤6：创建新主库连接池 ==========
     {
         std::lock_guard<std::mutex> pool_lock(mutex_);
         for (int i = 0; i < master_pool_size_; ++i) {
@@ -873,16 +920,16 @@ bool RedisConnectionPool::PerformFailover() {
         master_healthy_ = !connections_.empty();
     }
 
-    // ========== 步骤6：移除被提升的从库 ==========
+    // ========== 步骤7：移除被提升的从库 ==========
     slave_pools_.erase(slave_pools_.begin() + new_master_idx);
 
-    // ========== 步骤7：回调通知 ==========
+    // ========== 步骤8：回调通知 ==========
     if (failover_callback_) {
         failover_callback_(old_master, new_master);
     }
 
     MetricsCollector::Instance().IncRedisFailovers();
-    std::cout << "[Redis] Failover completed: " << old_master << " -> " << new_master << std::endl;
+    std::cout << "[Redis] 故障转移完成: " << old_master << " -> " << new_master << std::endl;
     failover_in_progress_ = false;
     return true;
 }
@@ -899,7 +946,7 @@ bool RedisConnectionPool::EnsureMasterAvailable() {
         return true;
     }
 
-    std::cerr << "[Redis] Master is unavailable, attempting failover..." << std::endl;
+    std::cerr << "[Redis] 主库不可用, 尝试故障转移..." << std::endl;
     return PerformFailover();
 }
 
@@ -912,6 +959,7 @@ bool RedisConnectionPool::EnsureMasterAvailable() {
 int RedisConnectionPool::SelectNewMaster() {
     int best_idx = -1;
     int64_t max_offset = -1;
+    int fallback_idx = -1;
 
     for (size_t i = 0; i < slave_pools_.size(); ++i) {
         SlavePool& pool = *slave_pools_[i];
@@ -925,9 +973,22 @@ int RedisConnectionPool::SelectNewMaster() {
             max_offset = offset;
             best_idx = static_cast<int>(i);
         }
+
+        if (fallback_idx < 0) {
+            fallback_idx = static_cast<int>(i);
+        }
     }
 
-    return best_idx;
+    if (best_idx >= 0) {
+        return best_idx;
+    }
+
+    if (fallback_idx >= 0) {
+        std::cout << "[Redis] 无有效偏移量数据, 选择第一个健康从库作为新主库" << std::endl;
+        return fallback_idx;
+    }
+
+    return -1;
 }
 
 /**
@@ -937,9 +998,10 @@ int RedisConnectionPool::SelectNewMaster() {
  * 注意：BGSAVE 是异步的，不等待备份完成
  */
 bool RedisConnectionPool::BackupDatabase(const std::string& backup_path) {
+    (void)backup_path;
     RedisConnection* conn = GetConnection(3000);
     if (!conn) {
-        std::cerr << "[Redis] Cannot get connection for backup" << std::endl;
+        std::cerr << "[Redis] 无法获取连接进行备份" << std::endl;
         return false;
     }
 
@@ -948,10 +1010,10 @@ bool RedisConnectionPool::BackupDatabase(const std::string& backup_path) {
     bool success = false;
 
     if (reply && (reply->type == REDIS_REPLY_STATUS || reply->type == REDIS_REPLY_STRING)) {
-        std::cout << "[Redis] Background save initiated" << std::endl;
+        std::cout << "[Redis] 后台保存已启动" << std::endl;
         success = true;
     } else {
-        std::cerr << "[Redis] BGSAVE command failed" << std::endl;
+        std::cerr << "[Redis] BGSAVE 命令失败" << std::endl;
     }
 
     if (reply) {
@@ -960,7 +1022,7 @@ bool RedisConnectionPool::BackupDatabase(const std::string& backup_path) {
     ReturnConnection(conn);
 
     if (success) {
-        std::cout << "[Redis] Database backup initiated (BGSAVE)" << std::endl;
+        std::cout << "[Redis] 数据库备份已启动 (BGSAVE)" << std::endl;
         MetricsCollector::Instance().IncRedisBackups();
     }
 
@@ -1017,7 +1079,7 @@ void RedisConnectionPool::StartHealthCheck(int interval_seconds) {
 
     health_check_running_ = true;
     health_check_thread_ = std::thread(&RedisConnectionPool::HealthCheckLoop, this, interval_seconds);
-    std::cout << "[Redis] Health check started with interval " << interval_seconds << "s" << std::endl;
+    std::cout << "[Redis] 健康检查已启动, 间隔 " << interval_seconds << "s" << std::endl;
 }
 
 /**
@@ -1071,7 +1133,7 @@ void RedisConnectionPool::HealthCheckLoop(int interval_seconds) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
-    std::cout << "[Redis] Health check stopped" << std::endl;
+    std::cout << "[Redis] 健康检查已停止" << std::endl;
 }
 
 } // namespace reactor

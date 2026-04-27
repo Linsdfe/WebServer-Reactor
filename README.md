@@ -13,7 +13,7 @@
 | 🔄 **MySQL 主从复制** | 读写分离 + 轮询负载均衡 + 半同步复制 + 复制延迟监控 + 自动故障转移 |
 | 💾 **Redis 主从复制** | 读写分离 + WAIT 命令强一致性 + 复制偏移量监控 + 自动故障转移 |
 | 🛡️ **自动容灾** | 主库故障自动检测与转移、从库健康检查、数据备份、告警回调 |
-| 🔒 **安全设计** | SHA256 密码哈希、参数化 SQL 查询（防注入）、连接池隔离 |
+| 🔒 **安全设计** | SHA256 密码哈希、参数化 SQL 查询（防注入）、路径遍历防护、请求体大小限制、命令注入防护 |
 | 📊 **实时性能监控** | 内置 Prometheus 格式指标导出，包含请求耗时、缓存命中率、主从状态等 |
 | 🏗️ **工程化结构** | 模块化分层 (net/http/server/auth/monitor)、CMake 构建、统一命名空间 |
 
@@ -97,6 +97,33 @@ cd bin
 - **监控面板 / Dashboard**：`http://localhost:8888/dashboard.html`
 - **性能指标 / Metrics**：`http://localhost:8888/metrics`
 
+### 7. 主从复制配置 / Replication Setup
+
+项目提供一键脚本配置 MySQL 和 Redis 主从复制架构（1主2从）：
+
+```bash
+# 首次初始化（创建从库数据目录、启动从库实例、配置复制关系）
+sudo bash init_replication.sh
+
+# 日常管理（启动/停止/状态查看/重启）
+sudo bash manage_replication.sh start|stop|status|restart
+
+# 复制状态测试（23项自动化测试）
+sudo bash test_replication.sh
+```
+
+**架构拓扑**：
+
+```
+MySQL:  3306 (Master) ──→ 3307 (Slave) + 3308 (Slave)
+Redis:  6379 (Master) ──→ 6380 (Slave) + 6381 (Slave)
+```
+
+**一键运行脚本**：`bash run.sh` 提供交互式菜单，支持三种运行模式：
+- **单机模式**：无主从复制，适合开发调试
+- **MySQL主从模式**：MySQL 读写分离 + 故障转移
+- **完整主从模式**：MySQL + Redis 主从复制 + 自动容灾测试
+
 ## 项目架构 / Project Architecture
 
 ```
@@ -128,7 +155,16 @@ WebServer-Reactor/
 │   ├── index.html              #   登录页 / Login Page
 │   ├── welcome.html            #   欢迎页 / Welcome Page
 │   └── dashboard.html          #   监控面板 / Monitoring Dashboard
+├── benchmark_results/          # 压测脚本 / Benchmark Scripts
+│   ├── login.lua               #   登录压测 / Login Benchmark
+│   ├── login_adv.lua           #   高级登录压测 / Advanced Login Benchmark
+│   ├── register.lua            #   注册压测 / Register Benchmark
+│   └── mixed.lua               #   混合压测 / Mixed Benchmark
 ├── CMakeLists.txt              # CMake 构建配置 / Build Configuration
+├── run.sh                      # 一键运行脚本 / All-in-one Runner
+├── init_replication.sh         # 主从复制初始化 / Replication Init
+├── manage_replication.sh       # 主从复制管理 / Replication Manager
+├── test_replication.sh         # 主从复制测试 / Replication Tests
 └── README.md                   # 项目文档 / Project Documentation
 ```
 
@@ -1097,24 +1133,111 @@ username=newuser&password=mypassword
 
 ## 性能压测 / Performance Benchmark
 
-### 静态资源压测结果 / Static Resource Benchmark
+### 测试环境 / Test Environment
 
-| 文件名称 / File | 大小 / Size | QPS | 带宽 / Bandwidth | 传输方式 / Transfer Mode |
-|----------|------|-----|------|----------|
-| welcome.html | 小文件 / Small | 145,484 | 146MB/s | 内存缓存 / Memory Cache |
-| index.html | 小文件 / Small | 102,820 | 1.06GB/s | 内存缓存 / Memory Cache |
-| 1mb.bin | 1MB | 12,486 | 12.20GB/s | sendfile 零拷贝 / Zero-Copy |
-| 10mb.bin | 10MB | 1,135 | 11.10GB/s | sendfile 零拷贝 / Zero-Copy |
+| 项目 / Item | 配置 / Configuration |
+|------|------|
+| 操作系统 / OS | Linux |
+| 压测工具 / Tool | wrk (HTTP benchmarking) |
+| 服务器配置 / Server | 8 IO 线程 / 8 IO Threads, 端口 8888 / Port 8888 |
+| 数据库 / Database | MySQL 8.0 (主 3306 + 从 3307/3308), Redis 7.0 (主 6379 + 从 6380/6381) |
+| 连接池 / Pool | MySQL 48 连接, Redis 48 连接 / 48 connections each |
+| 测试模式 / Modes | 单机 (standalone) / MySQL+Redis 主从 (full_replication) |
 
-### 认证功能压测结果 / Auth Benchmark
+### 压测配置 / Benchmark Configuration
 
-| 测试阶段 / Test | 线程数 / Threads | 并发数 / Concurrency | QPS | 平均延迟 / Avg Latency |
-|----------|--------|--------|-----|----------|
-| 标准-登录 / Standard Login | 12 | 200 | 6,921 | 42.89ms |
-| 标准-注册 / Standard Register | 12 | 200 | 1,050 | 166.74ms |
-| 极限-登录 / Extreme Login | 24 | 500 | 7,110 | 70.32ms |
+| 阶段 / Stage | 线程 / Threads | 并发 / Connections | 持续时间 / Duration |
+|------|------|------|------|
+| 预热 / Warmup | 6 | 100 | 10s |
+| 标准 / Standard | 12 | 300 | 30s |
+| 高负载 / High Load | 24 | 600 | 30s |
+| 极限 / Extreme | 48 | 1000 | 60s |
 
-**Redis 缓存效果 / Redis Cache Effect**：登录 QPS 从 1,045 提升到 7,110，**提升 6.8 倍 / 6.8x improvement**
+### 静态资源压测 / Static Resource Benchmark
+
+#### 单机模式 / Standalone Mode
+
+| 文件 / File | 大小 / Size | 线程/并发 | QPS | 平均延迟 / Avg Latency | 带宽 / Bandwidth | 传输方式 / Mode |
+|------|------|------|------|------|------|------|
+| welcome.html | 小文件 / Small | 24t/600c | 71,818 | 14.88ms | 392.52MB/s | 内存缓存 / Memory Cache |
+| index.html | 小文件 / Small | 24t/600c | 54,266 | 15.84ms | 0.88GB/s | 内存缓存 / Memory Cache |
+| 1mb.bin | 1MB | 24t/400c | 8,169 | 70.25ms | 7.99GB/s | sendfile 零拷贝 / Zero-Copy |
+| 10mb.bin | 10MB | 12t/200c | 684 | 293.70ms | 6.72GB/s | sendfile 零拷贝 / Zero-Copy |
+
+#### 主从复制模式 / Full Replication Mode (MySQL + Redis Master-Slave)
+
+| 文件 / File | 大小 / Size | 线程/并发 | QPS | 平均延迟 / Avg Latency | 带宽 / Bandwidth | 传输方式 / Mode |
+|------|------|------|------|------|------|------|
+| welcome.html | 小文件 / Small | 24t/600c | 85,993 | 18.53ms | 469.99MB/s | 内存缓存 / Memory Cache |
+| index.html | 小文件 / Small | 24t/600c | 62,493 | 19.44ms | 1.01GB/s | 内存缓存 / Memory Cache |
+| 1mb.bin | 1MB | 24t/400c | 7,043 | 90.79ms | 6.88GB/s | sendfile 零拷贝 / Zero-Copy |
+| 10mb.bin | 10MB | 12t/200c | 558 | 350.03ms | 5.48GB/s | sendfile 零拷贝 / Zero-Copy |
+
+### 认证功能压测 / Authentication Benchmark
+
+#### 单机模式 / Standalone Mode
+
+| 测试 / Test | 线程/并发 | QPS | 平均延迟 / Avg Latency | 超时错误 / Timeouts |
+|------|------|------|------|------|
+| 预热-登录 / Warmup Login | 6t/100c | 5,793 | 23.65ms | 0 |
+| 标准-登录 / Standard Login | 12t/300c | 4,756 | 82.36ms | 0 |
+| 标准-注册 / Standard Register | 12t/300c | 3,549 | 87.17ms | 0 |
+| 高负载-登录 / High Load Login | 24t/600c | 5,812 | 109.16ms | 0 |
+| 极限-登录 / Extreme Login | 48t/1000c | 5,646 | 165.34ms | 0 |
+| 混合读写 70%读 / Mixed 70%Read | 24t/600c | 48,468 | 17.00ms | 0 |
+
+#### 主从复制模式 / Full Replication Mode (MySQL + Redis Master-Slave)
+
+| 测试 / Test | 线程/并发 | QPS | 平均延迟 / Avg Latency | 超时错误 / Timeouts |
+|------|------|------|------|------|
+| 预热-登录 / Warmup Login | 6t/100c | 6,052 | 18.49ms | 0 |
+| 标准-登录 / Standard Login | 12t/300c | 5,791 | 59.36ms | 0 |
+| 标准-注册 / Standard Register | 12t/300c | 4,188 | 84.82ms | 80 |
+| 高负载-登录 / High Load Login | 24t/600c | 5,703 | 118.10ms | 105 |
+| 极限-登录 / Extreme Login | 48t/1000c | 5,683 | 167.83ms | 500 |
+| 混合读写 70%读 / Mixed 70%Read | 24t/600c | 58,696 | 20.31ms | 237 |
+
+### 压测数据分析 / Benchmark Analysis
+
+#### 单机 vs 主从复制性能对比 / Standalone vs Full Replication Comparison
+
+**静态资源 / Static Resources**：
+
+| 文件 / File | 单机 QPS | 主从 QPS | 变化 / Change |
+|------|------|------|------|
+| welcome.html | 71,818 | 85,993 | +19.7% |
+| index.html | 54,266 | 62,493 | +15.2% |
+| 1mb.bin | 8,169 | 7,043 | -13.8% |
+| 10mb.bin | 684 | 558 | -18.4% |
+
+**认证功能 / Authentication**：
+
+| 测试 / Test | 单机 QPS | 主从 QPS | 变化 / Change |
+|------|------|------|------|
+| 预热-登录 / Warmup Login | 5,793 | 6,052 | +4.5% |
+| 标准-登录 / Standard Login | 4,756 | 5,791 | +21.8% |
+| 标准-注册 / Standard Register | 3,549 | 4,188 | +18.0% |
+| 高负载-登录 / High Load Login | 5,812 | 5,703 | -1.9% |
+| 极限-登录 / Extreme Login | 5,646 | 5,683 | +0.7% |
+| 混合读写 / Mixed | 48,468 | 58,696 | +21.1% |
+
+**关键发现 / Key Findings**：
+
+1. **读操作显著提升 / Read Operations Improved**：主从复制模式下，登录 QPS 提升 21.8%（标准负载），混合读写 QPS 提升 21.1%，得益于从库分担读压力
+2. **写操作同步提升 / Write Operations Also Improved**：注册 QPS 提升 18.0%，因为主库专注于写操作，不再承担读查询
+3. **大文件传输略降 / Large File Transfer Slightly Lower**：大文件 QPS 下降 13-18%，因主从复制模式额外占用内存和 CPU 资源
+4. **极限负载稳定 / Stable Under Extreme Load**：48 线程 / 1000 并发下 QPS 稳定在 5,683，两种模式差异仅 0.7%
+5. **Redis 缓存效果 / Redis Cache Effect**：登录 QPS 从无缓存约 1,045 提升到 5,700+，**提升 5.4 倍 / 5.4x improvement**
+
+### 容灾测试结果 / Failover Benchmark
+
+| 测试场景 / Scenario | 故障检测时间 / Detection | 故障转移时间 / Failover | 服务恢复 / Recovery |
+|----------|--------|--------|--------|
+| MySQL 主库宕机 / Master Down | < 10s (健康检查间隔) | < 1s | **1 秒内恢复 / Within 1s** |
+
+**容灾流程**：主库健康检查失败 → 选择延迟最低的从库 → 提升为新主库（关闭只读 + 停止复制） → 连接池自动切换 → 服务恢复
+
+**自动恢复**：测试完成后自动重启主库、重新配置从库复制关系，支持连续多次运行
 
 ## 技术术语表 / Technology Glossary
 
@@ -1149,3 +1272,5 @@ username=newuser&password=mypassword
 - 🚀 支持 HTTP/2 协议 / Support HTTP/2 protocol
 - 📦 配置文件支持 / Config file support (YAML/JSON instead of CLI args)
 - 🔗 限流与熔断机制 / Rate limiting and circuit breaking
+- 🔄 GTID 自动位置同步 / GTID-based auto-positioning for failover recovery
+- 📊 Prometheus + Grafana 集成 / Native Prometheus + Grafana monitoring stack

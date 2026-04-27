@@ -253,14 +253,9 @@ void MySQLConnectionPool::Initialize(const std::string& host, const std::string&
 
     // ========== 步骤2：计算连接池大小 ==========
     if (pool_size <= 0) {
-        // 自动计算最优大小
         pool_size_ = CalculateOptimalPoolSize();
-        std::cout << "[MySQL] MySQL connection pool auto-calculated size: " << pool_size_
-                  << " (CPU cores: " << GetCpuCoreCount()
-                  << ", threads: " << GetThreadCount() << ")" << std::endl;
     } else {
         pool_size_ = pool_size;
-        std::cout << "[MySQL] MySQL connection pool using configured size: " << pool_size_ << std::endl;
     }
 
     // ========== 步骤3：预创建连接 ==========
@@ -273,8 +268,8 @@ void MySQLConnectionPool::Initialize(const std::string& host, const std::string&
 
     // ========== 步骤4：更新状态 ==========
     is_initialized_ = true;
-    master_healthy_ = !connections_.empty();  // 有连接则主库健康
-    std::cout << "[MySQL] MySQL connection pool initialized with " << connections_.size() << " connections" << std::endl;
+    master_healthy_ = !connections_.empty();
+    std::cout << "[MySQL] 主库连接池初始化完成: " << connections_.size() << "/" << pool_size_ << " 连接 (" << host_ << ":" << port_ << "/" << database_ << ")" << std::endl;
 }
 
 /**
@@ -301,7 +296,7 @@ void MySQLConnectionPool::InitializeWithSlaves(const MySQLNodeConfig& master_con
 
     // ========== 步骤2：检查是否有从库 ==========
     if (slave_configs.empty()) {
-        std::cout << "[MySQL] No slave nodes configured, using master-only mode" << std::endl;
+        std::cout << "[MySQL] 无从库配置, 使用单机模式" << std::endl;
         return;
     }
 
@@ -313,16 +308,16 @@ void MySQLConnectionPool::InitializeWithSlaves(const MySQLNodeConfig& master_con
         // 初始化该从库
         if (InitializeSlavePool(*slave_pools_[i], slave_configs[i])) {
             healthy_slaves++;
-            std::cout << "[MySQL-Slave-" << i << "] Connected to "
+            std::cout << "[MySQL] 从库-" << i << " 连接成功: "
                       << slave_configs[i].host << ":" << slave_configs[i].port << std::endl;
         } else {
-            std::cerr << "[MySQL-Slave-" << i << "] Failed to connect to "
+            std::cerr << "[MySQL] 从库-" << i << " 连接失败: "
                       << slave_configs[i].host << ":" << slave_configs[i].port << std::endl;
         }
     }
 
-    std::cout << "[MySQL] Master-Slave replication: " << healthy_slaves
-              << "/" << slave_configs.size() << " slaves healthy" << std::endl;
+    std::cout << "[MySQL] 主从复制状态: " << healthy_slaves
+              << "/" << slave_configs.size() << " 个从库健康" << std::endl;
 
     // ========== 步骤4：注册监控指标 ==========
     MetricsCollector::Instance().SetMySQLSlaveCount(static_cast<int>(slave_configs.size()));
@@ -421,11 +416,13 @@ MySQLConnection* MySQLConnectionPool::CreateConnection(const std::string& host, 
     // ========== 步骤4：检查数据库是否存在，不存在则自动创建 ==========
     std::string db_query = "CREATE DATABASE IF NOT EXISTS `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
     if (mysql_query(conn, db_query.c_str())) {
-        std::cerr << "Create database failed: " << mysql_error(conn) << std::endl;
-        mysql_close(conn);
-        return nullptr;
+        std::string err_msg = mysql_error(conn);
+        if (err_msg.find("read-only") == std::string::npos) {
+            std::cerr << "创建数据库失败: " << err_msg << std::endl;
+            mysql_close(conn);
+            return nullptr;
+        }
     }
-    std::cout << "[MySQL] Database '" << database << "' ensured on " << host << ":" << port << std::endl;
 
     // ========== 步骤5：创建 users 表（如果不存在） ==========
     std::string table_query = "CREATE TABLE IF NOT EXISTS `" + database + "`.`users` ("
@@ -435,16 +432,15 @@ MySQLConnection* MySQLConnectionPool::CreateConnection(const std::string& host, 
                              "`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
                              ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     if (mysql_query(conn, table_query.c_str())) {
-        std::cerr << "Create users table failed: " << mysql_error(conn) << std::endl;
-        mysql_close(conn);
-        return nullptr;
+        std::string err_msg = mysql_error(conn);
+        if (err_msg.find("read-only") == std::string::npos) {
+            std::cerr << "创建users表失败: " << err_msg << std::endl;
+            mysql_close(conn);
+            return nullptr;
+        }
     }
-    std::cout << "[MySQL] Table 'users' ensured on " << host << ":" << port << std::endl;
 
-    // ========== 步骤6：带数据库名建立连接 ==========
-    if (!mysql_select_db(conn, database.c_str())) {
-        std::cout << "[MySQL] Connected to database '" << database << "' on " << host << ":" << port << std::endl;
-    }
+    mysql_select_db(conn, database.c_str());
 
     // ========== 步骤7：设置字符集 ==========
     mysql_set_character_set(conn, "utf8mb4");
@@ -480,7 +476,7 @@ MySQLConnection* MySQLConnectionPool::GetMasterConnection(int timeout_ms) {
     // ========== 步骤2：检查主库健康 ==========
     if (!master_healthy_.load(std::memory_order_relaxed)) {
         if (!EnsureMasterAvailable()) {
-            std::cerr << "[MySQL] Master unavailable and failover failed" << std::endl;
+            std::cerr << "[MySQL] 主库不可用且故障转移失败" << std::endl;
             return nullptr;
         }
     }
@@ -585,7 +581,7 @@ MySQLConnection* MySQLConnectionPool::GetSlaveConnection(int timeout_ms) {
     }
 
     // ========== 步骤6：所有从库不可用，降级到主库 ==========
-    std::cout << "[MySQL] All slaves unavailable, falling back to master" << std::endl;
+    std::cout << "[MySQL] 所有从库不可用, 回退到主库" << std::endl;
     MetricsCollector::Instance().IncMySQLSlaveFallbacks();
     return GetMasterConnection(timeout_ms);
 }
@@ -623,6 +619,9 @@ MySQLConnection* MySQLConnectionPool::GetSlaveConnectionFromPool(SlavePool& pool
     if (!conn->IsValid()) {
         delete conn;
         conn = CreateConnection(pool.host, pool.port, pool.user, pool.password, pool.database);
+        if (!conn) {
+            return nullptr;
+        }
     }
 
     pool.active_count++;
@@ -837,14 +836,35 @@ bool MySQLConnectionPool::IsSlaveHealthy(int index) const {
  * 4. 更新 master_healthy_ 状态
  */
 bool MySQLConnectionPool::CheckMasterHealth() {
-    MySQLConnection* conn = GetMasterConnection(1000);
-    if (!conn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (connections_.empty()) {
+        MySQLConnection* conn = CreateConnection(host_, port_, user_, password_, database_);
+        if (conn) {
+            connections_.push(conn);
+            master_healthy_ = true;
+            return true;
+        }
         master_healthy_ = false;
         return false;
     }
 
+    MySQLConnection* conn = connections_.front();
+    connections_.pop();
+
     bool healthy = CheckConnection(conn);
-    ReturnMasterConnection(conn);
+
+    if (healthy) {
+        connections_.push(conn);
+    } else {
+        delete conn;
+        MySQLConnection* new_conn = CreateConnection(host_, port_, user_, password_, database_);
+        if (new_conn) {
+            connections_.push(new_conn);
+            healthy = true;
+        }
+    }
+
     master_healthy_ = healthy;
     return healthy;
 }
@@ -897,7 +917,7 @@ bool MySQLConnectionPool::CheckSlaveHealth(int index) {
 void MySQLConnectionPool::EnableSemiSync(int timeout_ms) {
     MySQLConnection* conn = GetMasterConnection(3000);
     if (!conn) {
-        std::cerr << "[MySQL] Failed to enable semi-sync: cannot get master connection" << std::endl;
+        std::cerr << "[MySQL] 启用半同步复制失败: 无法获取主库连接" << std::endl;
         return;
     }
 
@@ -912,7 +932,7 @@ void MySQLConnectionPool::EnableSemiSync(int timeout_ms) {
         mysql_query(mysql, "SET GLOBAL rpl_semi_sync_master_enabled = OFF");
         semi_sync_enabled_ = false;
         semi_sync_timeout_ms_ = 0;
-        std::cout << "[MySQL] Semi-sync replication disabled" << std::endl;
+        std::cout << "[MySQL] 半同步复制已禁用" << std::endl;
     } else {
         // 启用半同步复制
         mysql_query(mysql, "SET GLOBAL rpl_semi_sync_master_enabled = ON");
@@ -920,7 +940,7 @@ void MySQLConnectionPool::EnableSemiSync(int timeout_ms) {
         mysql_query(mysql, timeout_sql.c_str());
         semi_sync_enabled_ = true;
         semi_sync_timeout_ms_ = timeout_ms;
-        std::cout << "[MySQL] Semi-sync replication enabled with timeout " << timeout_ms << "ms" << std::endl;
+        std::cout << "[MySQL] 半同步复制已启用, 超时 " << timeout_ms << "ms" << std::endl;
     }
 
     ReturnMasterConnection(conn);
@@ -1039,18 +1059,16 @@ void MySQLConnectionPool::SetFailoverCallback(FailoverCallback callback) {
 bool MySQLConnectionPool::PerformFailover() {
     std::lock_guard<std::mutex> lock(failover_mutex_);
 
-    // ========== 步骤1：防止并发转移 ==========
     if (failover_in_progress_.exchange(true)) {
-        std::cerr << "[MySQL] Failover already in progress" << std::endl;
+        std::cerr << "[MySQL] 故障转移正在进行中" << std::endl;
         return false;
     }
 
-    std::cout << "[MySQL] Starting failover process..." << std::endl;
+    std::cout << "[MySQL] 开始故障转移..." << std::endl;
 
-    // ========== 步骤2：选择新主库 ==========
     int new_master_idx = SelectNewMaster();
     if (new_master_idx < 0) {
-        std::cerr << "[MySQL] No suitable slave found for failover" << std::endl;
+        std::cerr << "[MySQL] 未找到合适的从库进行故障转移" << std::endl;
         failover_in_progress_ = false;
         return false;
     }
@@ -1059,9 +1077,30 @@ bool MySQLConnectionPool::PerformFailover() {
     std::string old_master = host_ + ":" + std::to_string(port_);
     std::string new_master = new_master_pool.host + ":" + std::to_string(new_master_pool.port);
 
-    std::cout << "[MySQL] Promoting slave-" << new_master_idx << " (" << new_master << ") to master" << std::endl;
+    std::cout << "[MySQL] 提升从库-" << new_master_idx << " (" << new_master << ") 为主库" << std::endl;
 
-    // ========== 步骤3：销毁旧主库连接 ==========
+    // ========== 步骤3：在新主库上关闭只读模式并停止复制 ==========
+    {
+        MYSQL* raw = mysql_init(nullptr);
+        if (raw) {
+            if (mysql_real_connect(raw, new_master_pool.host.c_str(),
+                                   new_master_pool.user.empty() ? user_.c_str() : new_master_pool.user.c_str(),
+                                   new_master_pool.password.empty() ? password_.c_str() : new_master_pool.password.c_str(),
+                                   new_master_pool.database.empty() ? database_.c_str() : new_master_pool.database.c_str(),
+                                   new_master_pool.port, nullptr, 0)) {
+                mysql_query(raw, "STOP SLAVE");
+                mysql_query(raw, "RESET SLAVE ALL");
+                mysql_query(raw, "SET GLOBAL super_read_only=OFF");
+                mysql_query(raw, "SET GLOBAL read_only=OFF");
+                std::cout << "[MySQL] 新主库已关闭只读模式并停止复制" << std::endl;
+            } else {
+                std::cerr << "[MySQL] 连接新主库失败: " << mysql_error(raw) << std::endl;
+            }
+            mysql_close(raw);
+        }
+    }
+
+    // ========== 步骤4：销毁旧主库连接 ==========
     {
         std::lock_guard<std::mutex> pool_lock(mutex_);
         while (!connections_.empty()) {
@@ -1071,11 +1110,11 @@ bool MySQLConnectionPool::PerformFailover() {
         }
     }
 
-    // ========== 步骤4：更新主库地址 ==========
+    // ========== 步骤5：更新主库地址 ==========
     host_ = new_master_pool.host;
     port_ = new_master_pool.port;
 
-    // ========== 步骤5：创建新主库连接池 ==========
+    // ========== 步骤6：创建新主库连接池 ==========
     {
         std::lock_guard<std::mutex> pool_lock(mutex_);
         for (int i = 0; i < pool_size_; ++i) {
@@ -1087,15 +1126,15 @@ bool MySQLConnectionPool::PerformFailover() {
         master_healthy_ = !connections_.empty();
     }
 
-    // ========== 步骤6：从从库列表移除被提升的从库 ==========
+    // ========== 步骤7：从从库列表移除被提升的从库 ==========
     slave_pools_.erase(slave_pools_.begin() + new_master_idx);
 
-    // ========== 步骤7：通知上层 ==========
+    // ========== 步骤8：通知上层 ==========
     if (failover_callback_) {
         failover_callback_(old_master, new_master);
     }
 
-    std::cout << "[MySQL] Failover completed: " << old_master << " -> " << new_master << std::endl;
+    std::cout << "[MySQL] 故障转移完成: " << old_master << " -> " << new_master << std::endl;
     failover_in_progress_ = false;
     return true;
 }
@@ -1117,7 +1156,7 @@ bool MySQLConnectionPool::EnsureMasterAvailable() {
         return true;
     }
 
-    std::cerr << "[MySQL] Master is unavailable, attempting failover..." << std::endl;
+    std::cerr << "[MySQL] 主库不可用, 尝试故障转移..." << std::endl;
     return PerformFailover();
 }
 
@@ -1131,24 +1170,37 @@ bool MySQLConnectionPool::EnsureMasterAvailable() {
 int MySQLConnectionPool::SelectNewMaster() {
     int best_idx = -1;
     int64_t min_lag = INT64_MAX;
+    int fallback_idx = -1;
 
     for (size_t i = 0; i < slave_pools_.size(); ++i) {
         SlavePool& pool = *slave_pools_[i];
 
-        // 跳过不健康的从库
         if (!pool.is_healthy.load(std::memory_order_relaxed)) {
             continue;
         }
 
-        // 选择复制延迟最小的
         int64_t lag = pool.replication_lag_ms.load(std::memory_order_relaxed);
+
         if (lag >= 0 && lag < min_lag) {
             min_lag = lag;
             best_idx = static_cast<int>(i);
         }
+
+        if (fallback_idx < 0) {
+            fallback_idx = static_cast<int>(i);
+        }
     }
 
-    return best_idx;
+    if (best_idx >= 0) {
+        return best_idx;
+    }
+
+    if (fallback_idx >= 0) {
+        std::cout << "[MySQL] 无有效延迟数据, 选择第一个健康从库作为新主库" << std::endl;
+        return fallback_idx;
+    }
+
+    return -1;
 }
 
 /**
@@ -1160,17 +1212,24 @@ int MySQLConnectionPool::SelectNewMaster() {
  * @return true 备份成功，false 备份失败
  */
 bool MySQLConnectionPool::BackupDatabase(const std::string& backup_path) {
+    std::string safe_path = backup_path;
+    for (char& c : safe_path) {
+        if (c == ';' || c == '|' || c == '&' || c == '`' || c == '$' || c == '(' || c == ')' || c == '<' || c == '>') {
+            c = '_';
+        }
+    }
+
     std::ostringstream cmd;
     cmd << "mysqldump -h " << host_ << " -P " << port_
-        << " -u " << user_ << " -p" << password_
-        << " " << database_ << " > " << backup_path;
+        << " -u " << user_ << " --password=" << password_
+        << " " << database_ << " --result-file=" << safe_path;
 
     int ret = std::system(cmd.str().c_str());
     if (ret == 0) {
-        std::cout << "[MySQL] Database backup completed: " << backup_path << std::endl;
+        std::cout << "[MySQL] 数据库备份完成: " << safe_path << std::endl;
         return true;
     } else {
-        std::cerr << "[MySQL] Database backup failed with code: " << ret << std::endl;
+        std::cerr << "[MySQL] 数据库备份失败, 返回码: " << ret << std::endl;
         return false;
     }
 }
@@ -1225,7 +1284,7 @@ std::vector<int64_t> MySQLConnectionPool::GetAllReplicationLags() const {
  */
 void MySQLConnectionPool::SetReplicationLagAlert(int64_t threshold_ms) {
     replication_lag_alert_threshold_ms_ = threshold_ms;
-    std::cout << "[MySQL] Replication lag alert threshold set to " << threshold_ms << "ms" << std::endl;
+    std::cout << "[MySQL] 复制延迟告警阈值: " << threshold_ms << "ms" << std::endl;
 }
 
 /**
@@ -1247,7 +1306,7 @@ void MySQLConnectionPool::StartHealthCheck(int interval_seconds) {
 
     health_check_running_ = true;
     health_check_thread_ = std::thread(&MySQLConnectionPool::HealthCheckLoop, this, interval_seconds);
-    std::cout << "[MySQL] Health check started with interval " << interval_seconds << "s" << std::endl;
+    std::cout << "[MySQL] 健康检查已启动, 间隔 " << interval_seconds << "s" << std::endl;
 }
 
 /**
@@ -1305,7 +1364,7 @@ void MySQLConnectionPool::HealthCheckLoop(int interval_seconds) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
-    std::cout << "[MySQL] Health check stopped" << std::endl;
+    std::cout << "[MySQL] 健康检查已停止" << std::endl;
 }
 
 } // namespace reactor

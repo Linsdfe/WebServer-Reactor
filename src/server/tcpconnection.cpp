@@ -238,12 +238,8 @@ void TcpConnection::HandleRead() {
                 // 优先使用零拷贝路径（sendfile），失败时回退到普通读取
                 response_.Init(src_dir_, path, keep_alive, 200);
 
-                // 检查是否是dashboard.html（大文件需要强制内存缓存）
-                bool is_dashboard = (path.find("dashboard.html") != std::string::npos);
-
-                if (response_.IsZeroCopy() && response_.GetFileSize() > 24 * 1024 && !is_dashboard) {
+                if (response_.IsZeroCopy() && response_.GetFileSize() > 24 * 1024) {
                     // 零拷贝路径（sendfile）：文件大于24KB时使用，避免内核→用户态→内核的拷贝开销
-                    // 注意：dashboard.html强制使用内存缓存，不走零拷贝
                     const std::string& file_path = response_.GetFilePath();
                     file_fd_ = open(file_path.c_str(), O_RDONLY);
                     if (file_fd_ >= 0) {
@@ -255,7 +251,6 @@ void TcpConnection::HandleRead() {
                     }
                 } else {
                     // 用户内存缓存路径：文件小于等于24KB时使用，减少系统调用开销
-                    // dashboard.html始终使用内存缓存
                     std::string full_path = src_dir_ + path;
                     std::string file_content;
                     int code = 200;
@@ -263,10 +258,10 @@ void TcpConnection::HandleRead() {
                     // 尝试从缓存获取
                     if (cache_manager_ && cache_manager_->GetCache(full_path, file_content)) {
                         MetricsCollector::Instance().IncCacheHits();
-                        MetricsCollector::Instance().IncMemoryCacheHits();  // GET内存缓存命中
+                        MetricsCollector::Instance().IncMemoryCacheHits();
                     } else {
                         MetricsCollector::Instance().IncCacheMisses();
-                        MetricsCollector::Instance().IncMemoryCacheMisses();  // GET内存缓存未命中
+                        MetricsCollector::Instance().IncMemoryCacheMisses();
                         // 缓存未命中，读取文件
                         std::ifstream file(full_path, std::ios::binary);
                         if (!file.is_open()) {
@@ -283,10 +278,9 @@ void TcpConnection::HandleRead() {
                                 if (!file) {
                                     code = 500;
                                     file_content.clear();
-                                } else if (cache_manager_ && (size <= 24 * 1024 || is_dashboard)) {
-                                    // 缓存小文件（≤24KB）或dashboard.html（强制缓存）
+                                } else if (cache_manager_ && size <= 24 * 1024) {
                                     cache_manager_->SetCache(full_path, file_content);
-                                    MetricsCollector::Instance().IncMemoryCacheUpdates();  // 内存缓存更新
+                                    MetricsCollector::Instance().IncMemoryCacheUpdates();
                                 }
                             }
                             file.close();
@@ -337,7 +331,7 @@ void TcpConnection::HandleWrite() {
         const char* ptr = send_buffer_.c_str();
 
         while (bytes_sent < bytes_to_send) {
-            int len = send(fd_, ptr + bytes_sent, bytes_to_send - bytes_sent, 0);
+            ssize_t len = send(fd_, ptr + bytes_sent, bytes_to_send - bytes_sent, 0);
             if (len > 0) {
                 bytes_sent += len;
                 MetricsCollector::Instance().IncBytesWritten(static_cast<size_t>(len));
@@ -407,8 +401,12 @@ bool TcpConnection::SendFileZeroCopy() {
  */
 void TcpConnection::HandleClose() {
     loop_->AssertInLoopThread();
+    if (file_fd_ >= 0) {
+        close(file_fd_);
+        file_fd_ = -1;
+    }
     if (close_callback_) {
-        close_callback_(fd_); // 通知Server移除连接
+        close_callback_(fd_);
     }
 }
 
